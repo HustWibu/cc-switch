@@ -14,7 +14,6 @@ pub struct ModelMapping {
     pub fable_model: Option<String>,
     pub subagent_model: Option<String>,
     pub default_model: Option<String>,
-    pub picker_models: Vec<String>,
 }
 
 impl ModelMapping {
@@ -23,17 +22,6 @@ impl ModelMapping {
         let env = provider.settings_config.get("env");
 
         Self {
-            picker_models: provider
-                .settings_config
-                .get("modelPicker")
-                .and_then(|picker| picker.get("options"))
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(|option| option.get("model").and_then(Value::as_str))
-                .filter(|model| !model.trim().is_empty())
-                .map(String::from)
-                .collect(),
             haiku_model: env
                 .and_then(|e| e.get("ANTHROPIC_DEFAULT_HAIKU_MODEL"))
                 .and_then(|v| v.as_str())
@@ -79,15 +67,6 @@ impl ModelMapping {
 
     /// 根据原始模型名称获取映射后的模型
     pub fn map_model(&self, original_model: &str) -> String {
-        // An explicit /model selection is already an upstream ID. Preserve it
-        // before family matching (even IDs containing "sonnet" or "opus").
-        if self
-            .picker_models
-            .iter()
-            .any(|model| model == original_model)
-        {
-            return original_model.to_string();
-        }
         let model_lower = original_model.to_lowercase();
 
         // 1. 按模型类型匹配
@@ -206,32 +185,6 @@ pub fn strip_one_m_suffix_for_upstream_from_body(mut body: Value) -> Value {
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn explicit_picker_models_bypass_role_and_default_mapping() {
-        let mut provider = create_provider_with_mapping();
-        provider.settings_config["modelPicker"] = json!({
-            "replaceBuiltInOptions": true,
-            "options": [
-                { "model": "deepseek-chat" },
-                { "model": "vendor/claude-sonnet-custom" },
-                { "model": "large-model[1M]" }
-            ]
-        });
-        let mapping = ModelMapping::from_provider(&provider);
-        for model in [
-            "deepseek-chat",
-            "vendor/claude-sonnet-custom",
-            "large-model[1M]",
-        ] {
-            let (body, _, mapped) = apply_model_mapping(json!({"model": model}), &provider);
-            assert_eq!(body["model"], model);
-            assert_eq!(mapped, None);
-            assert_eq!(mapping.map_model(model), model);
-        }
-        assert_eq!(mapping.map_model("claude-sonnet-5"), "sonnet-mapped");
-        assert_eq!(mapping.map_model("unlisted-model"), "default-model");
-    }
 
     fn create_provider_with_mapping() -> Provider {
         Provider {

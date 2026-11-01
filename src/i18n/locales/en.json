@@ -1617,16 +1617,6 @@
     "openReleaseNotesFailed": "Failed to open release notes:"
   },
   "providerForm": {
-    "claudeModelPicker": {
-      "title": "Models",
-      "help": "Choose the models shown in Claude Code’s /model menu.",
-      "replaceBuiltIn": "Show only selected models",
-      "empty": "No models selected. Claude Code uses its default model list.",
-      "labelFor": "Display name for {{model}}",
-      "remove": "Remove {{model}}",
-      "roleDefaults": "Role defaults & fallback",
-      "roleHelp": "Set the models used by role aliases and background tasks. These defaults do not limit your /model list. 1M declares context support."
-    },
     "nativeConfig": {
       "title": "Config file {{path}} (this provider only)",
       "hint": "Shows this provider's part of the file in the app's own format and writes it there on save. Global settings such as the default model are not here. Comments typed here are not saved.",

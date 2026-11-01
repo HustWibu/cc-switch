@@ -11,7 +11,6 @@ import { providerSchema, type ProviderFormData } from "@/lib/schemas/provider";
 import {
   buildLocalProxyRequestOverrides,
   formatRequestOverrideObject,
-  isPlainObject,
 } from "@/lib/requestOverrides";
 import { providersApi, type AppId, type AuthCenterTarget } from "@/lib/api";
 import type { ProviderEditorInactiveField } from "@/lib/api/providers";
@@ -739,13 +738,6 @@ function ProviderFormFull({
   // 按行里实际写的映射算（和后端一样），不用 useModelState 回填过的值。
   const claudeSettingsConfig =
     appId === "claude" ? form.watch("settingsConfig") : "";
-  const claudeModelPicker = useMemo(() => {
-    try {
-      return JSON.parse(claudeSettingsConfig || "{}").modelPicker;
-    } catch {
-      return undefined;
-    }
-  }, [claudeSettingsConfig]);
   const mappedClaudeStackRows = useMemo(() => {
     let env: Record<string, unknown> | undefined;
     try {
@@ -2790,21 +2782,6 @@ function ProviderFormFull({
               directModeFormatNotice={directModeFormatNotice}
               stackModelRows={shownClaudeStackRows}
               onStackModelRowsChange={handleClaudeStackRowsChange}
-              modelPicker={claudeModelPicker}
-              onModelPickerChange={(modelPicker) => {
-                try {
-                  const config = JSON.parse(getSettingsConfig() || "{}");
-                  if (!isPlainObject(config)) {
-                    toast.error(t("providerForm.configJsonError"));
-                    return;
-                  }
-                  if (modelPicker) config.modelPicker = modelPicker;
-                  else delete config.modelPicker;
-                  handleSettingsConfigChange(JSON.stringify(config, null, 2));
-                } catch {
-                  toast.error(t("providerForm.configJsonError"));
-                }
-              }}
             />
           )}
 

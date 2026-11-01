@@ -362,13 +362,6 @@ fn apply_claude_model_settings(
     settings: &serde_json::Value,
     startup_model: Option<&str>,
 ) {
-    if let Some(picker) = settings.get("modelPicker") {
-        // --settings also accepts inline JSON. Only pass the picker here:
-        // profile credentials and routing remain scoped to the child environment.
-        command
-            .arg("--settings")
-            .arg(serde_json::json!({"modelPicker": picker}).to_string());
-    }
     let env = settings.get("env").and_then(serde_json::Value::as_object);
     if let Some(env) = env {
         for key in ["ANTHROPIC_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"] {
@@ -745,7 +738,7 @@ mod tests {
     }
 
     #[test]
-    fn launcher_passes_selected_models_as_settings_without_other_provider_fields() {
+    fn launcher_uses_default_picker_without_copying_provider_settings() {
         let picker = serde_json::json!({
             "replaceBuiltInOptions": true,
             "options": [{"model": "gpt-6-astra", "label": "GPT"}]
@@ -758,9 +751,7 @@ mod tests {
         let mut command = std::process::Command::new("claude");
         apply_claude_model_settings(&mut command, &settings, Some("startup-model"));
         let args: Vec<_> = command.get_args().collect();
-        assert_eq!(args[0], "--settings");
-        let passed: serde_json::Value = serde_json::from_str(args[1].to_str().unwrap()).unwrap();
-        assert_eq!(passed, serde_json::json!({"modelPicker": picker}));
+        assert!(args.is_empty());
         let env: std::collections::HashMap<_, _> = command.get_envs().collect();
         assert_eq!(
             env[std::ffi::OsStr::new("ANTHROPIC_MODEL")].unwrap(),

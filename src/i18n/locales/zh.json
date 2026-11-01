@@ -1617,16 +1617,6 @@
     "openReleaseNotesFailed": "打开更新日志失败:"
   },
   "providerForm": {
-    "claudeModelPicker": {
-      "title": "模型",
-      "help": "选择要在 Claude Code /model 菜单中显示的模型。",
-      "replaceBuiltIn": "仅显示选中的模型",
-      "empty": "未选择模型，Claude Code 使用默认模型列表。",
-      "labelFor": "{{model}} 的显示名称",
-      "remove": "移除 {{model}}",
-      "roleDefaults": "角色默认模型与回落",
-      "roleHelp": "设置角色别名和后台任务使用的模型。这些默认值不限制 /model 列表。1M 仅声明上下文支持。"
-    },
     "nativeConfig": {
       "title": "配置文件 {{path}}（只显示这一家）",
       "hint": "按应用自己的格式显示这一家在文件里的部分，保存后写进这个文件；默认模型等全局设置不在这里。在这里写的注释不会保存。",

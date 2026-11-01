@@ -111,21 +111,11 @@ const renderCopilotForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) => {
     ...overrides,
   };
 
-  const result = render(
+  return render(
     <FormShell>
       <ClaudeFormFields {...props} />
     </FormShell>,
   );
-  // Exercise the controls after opening their new sections.
-  for (const name of [
-    "providerForm.advancedOptionsToggle",
-    "providerForm.claudeModelPicker.roleDefaults",
-  ]) {
-    const toggle = screen.queryByRole("button", { name });
-    if (toggle?.getAttribute("aria-expanded") === "false")
-      fireEvent.click(toggle);
-  }
-  return result;
 };
 
 const renderCodexOauthForm = (overrides: Partial<ClaudeFormFieldsProps> = {}) =>
@@ -173,7 +163,9 @@ describe("ClaudeFormFields", () => {
         isCopilotPreset: false,
         apiFormat: "openai_chat",
       });
-      expect(screen.getByRole("combobox", { name: "思考档位" })).toBeVisible();
+      expect(
+        screen.getByRole("combobox", { name: "思考档位" }),
+      ).toBeVisible();
       unmount();
 
       renderCopilotForm({

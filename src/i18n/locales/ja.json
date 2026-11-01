@@ -1617,16 +1617,6 @@
     "openReleaseNotesFailed": "リリースノートを開けませんでした:"
   },
   "providerForm": {
-    "claudeModelPicker": {
-      "title": "モデル",
-      "help": "Claude Code の /model メニューに表示するモデルを選択します。",
-      "replaceBuiltIn": "選択したモデルのみ表示",
-      "empty": "モデルが未選択です。Claude Code は既定の一覧を使用します。",
-      "labelFor": "{{model}} の表示名",
-      "remove": "{{model}} を削除",
-      "roleDefaults": "ロールの既定モデルとフォールバック",
-      "roleHelp": "ロールの別名とバックグラウンド処理で使うモデルを設定します。/model の一覧は制限されません。1M はコンテキスト対応の宣言です。"
-    },
     "nativeConfig": {
       "title": "設定ファイル {{path}}（このプロバイダーのみ）",
       "hint": "このプロバイダーの部分をアプリ本来の形式で表示し、保存時にこのファイルへ書き込みます。デフォルトモデルなどのグローバル設定はここにはありません。ここに書いたコメントは保存されません。",

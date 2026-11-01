@@ -5329,17 +5329,13 @@ async fn prepare_provider_terminal_launch(
                 None => {
                     let env_vars =
                         extract_env_vars_from_config(&provider.settings_config, &app_type);
-                    claude_terminal_launch(
-                        &env_vars,
-                        &providerId,
-                        provider.settings_config.get("modelPicker"),
-                    )?
+                    claude_terminal_launch(&env_vars, &providerId)?
                 }
             }
         }
         _ => {
             let env_vars = extract_env_vars_from_config(&provider.settings_config, &app_type);
-            claude_terminal_launch(&env_vars, &providerId, None)?
+            claude_terminal_launch(&env_vars, &providerId)?
         }
     };
     if skipPermissions == Some(true) {
@@ -5655,10 +5651,9 @@ fn codex_launch(
 fn claude_terminal_launch(
     env_vars: &[(String, String)],
     provider_id: &str,
-    model_picker: Option<&serde_json::Value>,
 ) -> Result<ProviderLaunch, String> {
     let config_file = unique_temp_path(&format!("claude_{provider_id}"), "json");
-    write_claude_config(&config_file, env_vars, model_picker)?;
+    write_claude_config(&config_file, env_vars)?;
     let config_name = config_file
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -6104,7 +6099,6 @@ fn write_unix_launcher(
 fn write_claude_config(
     config_file: &std::path::Path,
     env_vars: &[(String, String)],
-    model_picker: Option<&serde_json::Value>,
 ) -> Result<(), String> {
     let mut config_obj = serde_json::Map::new();
     let mut env_obj = serde_json::Map::new();
@@ -6114,9 +6108,6 @@ fn write_claude_config(
     }
 
     config_obj.insert("env".to_string(), serde_json::Value::Object(env_obj));
-    if let Some(picker) = model_picker {
-        config_obj.insert("modelPicker".to_string(), picker.clone());
-    }
 
     let config_json =
         serde_json::to_string_pretty(&config_obj).map_err(|e| format!("序列化配置失败: {e}"))?;
@@ -7865,8 +7856,7 @@ mod tests {
     fn claude_terminal_config_is_private() {
         use std::os::unix::fs::PermissionsExt;
         let launch =
-            claude_terminal_launch(&[("ANTHROPIC_AUTH_TOKEN".into(), "t".into())], "p", None)
-                .unwrap();
+            claude_terminal_launch(&[("ANTHROPIC_AUTH_TOKEN".into(), "t".into())], "p").unwrap();
         let file = &launch.cleanup[0];
         assert_eq!(
             std::fs::metadata(file).unwrap().permissions().mode() & 0o777,
@@ -7879,26 +7869,6 @@ mod tests {
                 file.to_string_lossy().into_owned()
             ]
         );
-        std::fs::remove_file(file).unwrap();
-    }
-
-    #[test]
-    fn claude_terminal_preserves_the_selected_model_picker() {
-        let picker = serde_json::json!({
-            "replaceBuiltInOptions": true,
-            "options": [{"model": "gpt-6-astra", "label": "GPT", "description": "Selected"}]
-        });
-        let launch = claude_terminal_launch(
-            &[("ANTHROPIC_MODEL".into(), "gpt-6-astra".into())],
-            "picker-test",
-            Some(&picker),
-        )
-        .unwrap();
-        let file = &launch.cleanup[0];
-        let settings: serde_json::Value =
-            serde_json::from_slice(&std::fs::read(file).unwrap()).unwrap();
-        assert_eq!(settings["modelPicker"], picker);
-        assert_eq!(settings["env"]["ANTHROPIC_MODEL"], "gpt-6-astra");
         std::fs::remove_file(file).unwrap();
     }
 

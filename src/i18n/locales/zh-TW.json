@@ -1618,16 +1618,6 @@
     "openReleaseNotesFailed": "開啟更新日誌失敗："
   },
   "providerForm": {
-    "claudeModelPicker": {
-      "title": "模型",
-      "help": "選擇要在 Claude Code /model 選單中顯示的模型。",
-      "replaceBuiltIn": "僅顯示選取的模型",
-      "empty": "尚未選取模型，Claude Code 使用預設模型清單。",
-      "labelFor": "{{model}} 的顯示名稱",
-      "remove": "移除 {{model}}",
-      "roleDefaults": "角色預設模型與備用",
-      "roleHelp": "設定角色別名和背景工作使用的模型。這些預設值不限制 /model 清單。1M 僅宣告上下文支援。"
-    },
     "nativeConfig": {
       "title": "設定檔 {{path}}（只顯示這一家）",
       "hint": "按應用自己的格式顯示這一家在檔案裡的部分，儲存後寫進這個檔案；預設模型等全域設定不在這裡。在這裡寫的註解不會儲存。",

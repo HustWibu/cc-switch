@@ -1602,16 +1602,6 @@
     "openReleaseNotesFailed": "Sürüm notları açılamadı:"
   },
   "providerForm": {
-    "claudeModelPicker": {
-      "title": "Modeller",
-      "help": "Claude Code /model menüsünde gösterilecek modelleri seçin.",
-      "replaceBuiltIn": "Yalnızca seçili modelleri göster",
-      "empty": "Model seçilmedi. Claude Code varsayılan model listesini kullanır.",
-      "labelFor": "{{model}} için görünen ad",
-      "remove": "{{model}} modelini kaldır",
-      "roleDefaults": "Rol varsayılanları ve yedek model",
-      "roleHelp": "Rol takma adları ve arka plan görevleri için modelleri ayarlayın. Bu varsayılanlar /model listesini sınırlamaz. 1M, bağlam desteğini belirtir."
-    },
     "supplierName": "Sağlayıcı Adı",
     "supplierNameRequired": "Sağlayıcı Adı *",
     "supplierNamePlaceholder": "ör. Anthropic Resmi",
