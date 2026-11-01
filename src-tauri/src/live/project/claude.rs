@@ -284,8 +284,16 @@ pub fn proxy_projection(
             env.insert(key.to_string(), placeholder);
         }
     }
+    let mut top = Map::new();
+    // In route mode the provider's explicit picker models go through its proxy.
+    // Stack mode builds its own list of provider-qualified model IDs instead.
+    if stack_default.is_none() {
+        if let Some(picker) = route.top.get("modelPicker") {
+            top.insert("modelPicker".to_string(), picker.clone());
+        }
+    }
     ClaudeProjection {
-        top: Map::new(),
+        top,
         env,
         exclusive: route.exclusive.clone(),
     }
@@ -491,6 +499,45 @@ fn is_truthy(value: &Value) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn provider_picker_survives_direct_and_route_projection_but_not_stack() {
+        let row = json!({
+            "env": {"ANTHROPIC_AUTH_TOKEN": "sk", "ANTHROPIC_MODEL": "default"},
+            "modelPicker": {
+                "replaceBuiltInOptions": true,
+                "options": [{"model": "custom-model", "label": "Custom"}]
+            },
+            "model": "previous-selection"
+        });
+        let projection = ClaudeProjection::of(&row);
+        let direct = project(&json!({}), None, &row);
+        assert_eq!(direct["modelPicker"], row["modelPicker"]);
+        let routed = proxy_projection(
+            &projection,
+            "http://127.0.0.1:15721",
+            ProxyAuth::FollowRow,
+            None,
+        );
+        assert_eq!(routed.top["modelPicker"], row["modelPicker"]);
+        assert!(!routed.top.contains_key("model"));
+        let stacked = proxy_projection(
+            &projection,
+            "http://127.0.0.1:15721",
+            ProxyAuth::FollowRow,
+            Some(StackRoleModel {
+                id: "stack-model",
+                name: "Stack",
+            }),
+        );
+        assert!(!stacked.top.contains_key("modelPicker"));
+        let switched = project(
+            &direct,
+            Some(&row),
+            &json!({"env": {"ANTHROPIC_MODEL": "other"}}),
+        );
+        assert!(switched.get("modelPicker").is_none());
+    }
 
     fn project(live: &Value, prev: Option<&Value>, target: &Value) -> Value {
         let prev = prev.map(ClaudeProjection::of);

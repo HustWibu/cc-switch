@@ -77,6 +77,7 @@ import {
 } from "@/components/shell/AppPageHeader";
 import { WindowControls } from "@/components/shell/WindowControls";
 import { APP_DISPLAY_NAME, AppGlyph } from "@/components/shell/AppGlyph";
+import { LaunchProfilesDialog } from "@/components/profiles/LaunchProfilesDialog";
 import { ProfileSwitcher } from "@/components/profiles/ProfileSwitcher";
 import { ProviderList } from "@/components/providers/ProviderList";
 import { AddProviderDialog } from "@/components/providers/AddProviderDialog";
@@ -1389,6 +1390,13 @@ function App() {
       }
       actions={
         <>
+          {currentView === "providers" &&
+            ["claude", "codex", "opencode"].includes(activeApp) && (
+              <LaunchProfilesDialog
+                key={activeApp}
+                appId={activeApp as "claude" | "codex" | "opencode"}
+              />
+            )}
           {currentView === "providers" &&
             activeApp !== "mcode" &&
             activeApp !== "dsh" &&

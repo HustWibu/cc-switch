@@ -1,3 +1,8 @@
+import {
+  ProviderLauncherFields,
+  emptyLauncherDraft,
+  saveProviderLauncher,
+} from "@/components/profiles/ProviderLauncherFields";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
@@ -50,7 +55,7 @@ interface AddProviderDialogProps {
       ensureGrokBuildOfficialSeed?: boolean;
       editorSave?: ProviderEditorSave;
     },
-  ) => Promise<void> | void;
+  ) => Promise<Provider | void> | void;
   /** 从供应商页哪一格打开的，见 ProviderForm 的同名参数 */
   modeView?: AppMode;
 }
@@ -63,6 +68,8 @@ export function AddProviderDialog({
   modeView,
 }: AddProviderDialogProps) {
   const { t } = useTranslation();
+  const [launcherDraft, setLauncherDraft] = useState(emptyLauncherDraft);
+  const [launcherProviderName, setLauncherProviderName] = useState("");
   // OpenCode and OpenClaw don't support universal providers
   const showUniversalTab =
     appId !== "opencode" &&
@@ -80,7 +87,10 @@ export function AddProviderDialog({
   const [pickerHost, setPickerHost] = useState<HTMLDivElement | null>(null);
   const [manageUniversalOpen, setManageUniversalOpen] = useState(false);
   useEffect(() => {
-    if (open) setStep("pick");
+    if (open) {
+      setStep("pick");
+      setLauncherDraft(emptyLauncherDraft);
+    }
   }, [open, appId]);
   const selectorCount = useRef(0);
   const registerSelector = useCallback(() => {
@@ -456,10 +466,20 @@ export function AddProviderDialog({
             ? draftEditorBase
             : null;
       const submit = async (onConflict: EditorConflictPolicy) => {
-        await onSubmit({
+        const savedProvider = await onSubmit({
           ...providerData,
           ...(editorBase ? { editorSave: { ...editorBase, onConflict } } : {}),
         });
+        if (savedProvider && launcherDraft.alias.trim()) {
+          try {
+            await saveProviderLauncher(appId, savedProvider, launcherDraft);
+          } catch (error) {
+            toast.error(
+              t("launchProfiles.partialFailure", { error: String(error) }),
+              { duration: 12000 },
+            );
+          }
+        }
         closeDialog();
       };
       await submitWithConflictRetry(submit);
@@ -472,6 +492,8 @@ export function AddProviderDialog({
       projectsDraft,
       draftEditorBase,
       submitWithConflictRetry,
+      launcherDraft,
+      t,
     ],
   );
 
@@ -510,34 +532,46 @@ export function AddProviderDialog({
     ) : null;
 
   const form = (
-    <ProviderForm
-      appId={appId}
-      submitLabel={t("common.add")}
-      modeView={modeView}
-      onStackLayoutChange={setStackLayout}
-      onSubmit={handleSubmit}
-      onCancel={closeDialog}
-      onManageAuthAccounts={setAuthSettingsTarget}
-      onSubmittingChange={setIsFormSubmitting}
-      onSubmitReadyChange={handleSubmitReadyChange}
-      onAccountLoginChange={setAccountLogin}
-      showButtons={false}
-      claudeLiveBase={
-        appId === "claude" ? (claudeLiveBase ?? undefined) : undefined
-      }
-      onEditorBaseChange={projectsDraft ? handleDraftEditorBase : undefined}
-      onUniversalPresetSelect={
-        showUniversalTab
-          ? (preset) => {
-              setSelectedUniversalPreset(preset);
-              setUniversalFormOpen(true);
-            }
-          : undefined
-      }
-      onManageUniversalProviders={
-        showUniversalTab ? () => setManageUniversalOpen(true) : undefined
-      }
-    />
+    <>
+      <ProviderForm
+        appId={appId}
+        submitLabel={t("common.add")}
+        modeView={modeView}
+        onStackLayoutChange={setStackLayout}
+        onSubmit={handleSubmit}
+        onCancel={closeDialog}
+        onManageAuthAccounts={setAuthSettingsTarget}
+        onSubmittingChange={setIsFormSubmitting}
+        onNameChange={setLauncherProviderName}
+        onSubmitReadyChange={handleSubmitReadyChange}
+        onAccountLoginChange={setAccountLogin}
+        showButtons={false}
+        claudeLiveBase={
+          appId === "claude" ? (claudeLiveBase ?? undefined) : undefined
+        }
+        onEditorBaseChange={projectsDraft ? handleDraftEditorBase : undefined}
+        onUniversalPresetSelect={
+          showUniversalTab
+            ? (preset) => {
+                setSelectedUniversalPreset(preset);
+                setUniversalFormOpen(true);
+              }
+            : undefined
+        }
+        onManageUniversalProviders={
+          showUniversalTab ? () => setManageUniversalOpen(true) : undefined
+        }
+      />
+      {step === "form" && !accountLogin && (
+        <ProviderLauncherFields
+          key={`${open}-${appId}`}
+          appId={appId}
+          providerName={launcherProviderName}
+          value={launcherDraft}
+          onChange={setLauncherDraft}
+        />
+      )}
+    </>
   );
 
   return (

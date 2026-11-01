@@ -22,7 +22,7 @@ export interface FetchedModelSelection {
   remove: string[];
 }
 
-interface ModelMetadataSourceProps {
+export interface ModelMetadataSourceProps {
   baseUrl: string;
   presets?: () => readonly PresetModelSource[];
 }
@@ -171,6 +171,20 @@ function FetchedModelPickerBody({
   const baseUrl = metadataSource?.baseUrl;
   const presets = metadataSource?.presets;
   const allIdsKey = allIds.join("\n");
+  const freeModelIds = useMemo(() => {
+    const result = new Set<string>();
+    if (baseUrl === undefined) return result;
+    const presetSources = presets?.();
+    for (const id of allIdsKey.split("\n")) {
+      const cost = resolveModelMetadata(id, {
+        baseUrl,
+        presets: presetSources,
+        modelsDev,
+      })?.cost;
+      if (cost?.input === 0 && cost.output === 0) result.add(id);
+    }
+    return result;
+  }, [allIdsKey, baseUrl, modelsDev, presets]);
   const summaries = useMemo(() => {
     const result = new Map<string, string>();
     if (baseUrl === undefined) return result;
@@ -232,6 +246,11 @@ function FetchedModelPickerBody({
         <span className="min-w-0 flex-1 truncate text-body" title={id}>
           {id}
         </span>
+        {freeModelIds.has(id) && (
+          <span className="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-caption font-medium text-emerald-700 dark:text-emerald-400">
+            Free
+          </span>
+        )}
         {summaries.has(id) && (
           <span className="shrink-0 text-caption tabular-nums text-fg-2">
             {summaries.get(id)}

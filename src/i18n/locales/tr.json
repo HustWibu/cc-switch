@@ -185,6 +185,12 @@
     "terminalOpened": "Terminal açıldı",
     "terminalOpenFailed": "Terminal açılamadı",
     "openTerminalDialog": {
+      "generateCommand": "Komut oluştur",
+      "copyCommand": "Komutu kopyala",
+      "generatedCommand": "Başlatma komutu",
+      "commandHint": "Seçilen klasör ve seçeneklerle çalıştırmak için terminale yapıştırın. Komut bir kez çalışır; tekrar çalıştırmak için yeniden oluşturun.",
+      "commandCopied": "Komut kopyalandı",
+      "generateFailed": "Komut oluşturulamadı",
       "title": "Terminal hangi klasörde açılsın?",
       "description": "Seçtiğiniz klasörde bir terminal açılır ve {{app}}, \"{{name}}\" ayarlarıyla başlatılır. Genellikle proje klasörünüzü seçebilirsiniz.",
       "isolationTitle": "Bu terminal yalıtılmıştır",
@@ -1596,6 +1602,14 @@
     "openReleaseNotesFailed": "Sürüm notları açılamadı:"
   },
   "providerForm": {
+    "claudeModelPicker": {
+      "title": "Claude Code /model modelleri",
+      "help": "Modelleri alın ve Claude Code içinde görünecek olanları seçin. Claude Code 2.1.242 veya üzeri gerekir. Kaydedip bu sağlayıcıyı etkinleştirdikten sonra Claude Code uygulamasını yeniden başlatın.",
+      "replaceBuiltIn": "Yerleşik model listesini değiştir",
+      "empty": "Model seçilmedi. Claude Code varsayılan model listesini kullanır.",
+      "labelFor": "{{model}} için görünen ad",
+      "remove": "{{model}} modelini kaldır"
+    },
     "supplierName": "Sağlayıcı Adı",
     "supplierNameRequired": "Sağlayıcı Adı *",
     "supplierNamePlaceholder": "ör. Anthropic Resmi",

@@ -1,3 +1,13 @@
+import { launchProfilesApi } from "@/lib/api/launchProfiles";
+import { ProviderVerificationDialog } from "./ProviderVerificationDialog";
+import {
+  ProviderLauncherFields,
+  emptyLauncherDraft,
+  suggestLauncher,
+  supportsLauncher,
+  saveProviderLauncher,
+} from "@/components/profiles/ProviderLauncherFields";
+import { toast } from "@/lib/toast";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Loader2 } from "lucide-react";
@@ -75,6 +85,41 @@ export function EditProviderDialog({
   modeView,
 }: EditProviderDialogProps) {
   const { t } = useTranslation();
+  const [launcherDraft, setLauncherDraft] = useState(emptyLauncherDraft);
+  const [launcherProviderName, setLauncherProviderName] = useState("");
+  useEffect(() => {
+    setLauncherDraft({
+      ...emptyLauncherDraft,
+      alias: provider ? suggestLauncher(appId, provider.name) : "",
+    });
+    if (!open || !provider || !supportsLauncher(appId)) return;
+    let cancelled = false;
+    void launchProfilesApi
+      .list()
+      .then((profiles) => {
+        const existing = profiles.find(
+          (p) =>
+            (p.runtime ?? "claude") === appId && p.providerId === provider.id,
+        );
+        if (!cancelled && existing)
+          setLauncherDraft((current) =>
+            current.alias === suggestLauncher(appId, provider.name) &&
+            !current.model
+              ? {
+                  ...current,
+                  alias: existing.launcher,
+                  model: existing.model ?? "",
+                }
+              : current,
+          );
+      })
+      .catch(() => {
+        /* Saving reports API errors through the existing dialog handler. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, provider?.id, appId]);
   const [isFormSubmitting, setIsFormSubmitting] = useState(false);
   // 表单用了聚合的简化布局：页头应用名后标「聚合模式」
   const [stackLayout, setStackLayout] = useState(false);
@@ -324,6 +369,16 @@ export function EditProviderDialog({
             ? { editorSave: { base: editorView.settings, onConflict } }
             : {}),
         });
+        if (launcherDraft.alias.trim()) {
+          try {
+            await saveProviderLauncher(appId, updatedProvider, launcherDraft);
+          } catch (error) {
+            toast.error(
+              t("launchProfiles.partialFailure", { error: String(error) }),
+              { duration: 12000 },
+            );
+          }
+        }
         closeDialog();
       };
       await submitWithConflictRetry(submit);
@@ -335,6 +390,8 @@ export function EditProviderDialog({
       provider,
       editorView,
       submitWithConflictRetry,
+      launcherDraft,
+      t,
     ],
   );
 
@@ -418,6 +475,7 @@ export function EditProviderDialog({
           onCancel={closeDialog}
           onManageAuthAccounts={setAuthSettingsTarget}
           onSubmittingChange={setIsFormSubmitting}
+          onNameChange={setLauncherProviderName}
           onSubmitReadyChange={handleSubmitReadyChange}
           initialData={initialData}
           showButtons={false}
@@ -427,6 +485,14 @@ export function EditProviderDialog({
           onStackLayoutChange={setStackLayout}
         />
       )}
+      <ProviderLauncherFields
+        key={`${open}-${appId}-${provider.id}`}
+        appId={appId}
+        providerName={launcherProviderName}
+        value={launcherDraft}
+        onChange={setLauncherDraft}
+      />
+      <ProviderVerificationDialog appId={appId} providerId={provider.id} />
       {conflictDialog}
       <AuthSettingsPanel
         target={authSettingsTarget}

@@ -22,6 +22,19 @@ impl Database {
 
     /// 在指定连接上创建表（供迁移和测试使用）
     pub(crate) fn create_tables_on_conn(conn: &Connection) -> Result<(), AppError> {
+        // Additive launch-profile storage; existing project profiles are untouched.
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS launch_profiles (
+            id TEXT PRIMARY KEY, launcher TEXT NOT NULL UNIQUE,
+            config_dir TEXT NOT NULL UNIQUE, payload TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS launch_profile_sessions (
+            token_hash TEXT PRIMARY KEY, profile_id TEXT NOT NULL,
+            revision INTEGER NOT NULL, provider_fingerprint TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS launch_sessions_profile ON launch_profile_sessions(profile_id);",
+        )
+        .map_err(|e| AppError::Database(e.to_string()))?;
         // 1. Providers 表
         conn.execute(
             "CREATE TABLE IF NOT EXISTS providers (

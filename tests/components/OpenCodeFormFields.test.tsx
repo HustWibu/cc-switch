@@ -81,6 +81,48 @@ const expandFirstModel = () => {
 };
 
 describe("OpenCodeFormFields", () => {
+  it("labels only models with zero input and output prices at this endpoint as Free", async () => {
+    server.use(
+      http.get(MODELS_DEV_API_URL, () =>
+        HttpResponse.json({
+          opencode: {
+            api: "https://opencode.ai/zen/v1",
+            models: {
+              "free-model": { cost: { input: 0, output: 0 } },
+              "paid-model": { cost: { input: 0, output: 1 } },
+              "unknown-model": {},
+            },
+          },
+          "opencode-go": {
+            api: "https://opencode.ai/zen/go/v1",
+            models: {
+              "paid-model": { cost: { input: 0, output: 0 } },
+            },
+          },
+        }),
+      ),
+    );
+    vi.mocked(fetchModelsForConfig).mockResolvedValue([
+      { id: "free-model", ownedBy: null },
+      { id: "paid-model", ownedBy: null },
+      { id: "unknown-model", ownedBy: null },
+    ]);
+    renderOpenCodeForm({ models: {}, baseUrl: "https://opencode.ai/zen/v1" });
+    fireEvent.click(screen.getByRole("button", { name: FETCH }));
+    const dialog = await screen.findByRole("dialog");
+    const row = (id: string) =>
+      within(dialog).getByRole("checkbox", { name: id }).closest("label")!;
+    await waitFor(() =>
+      expect(within(row("free-model")).getByText("Free")).toBeVisible(),
+    );
+    expect(
+      within(row("paid-model")).queryByText("Free"),
+    ).not.toBeInTheDocument();
+    expect(
+      within(row("unknown-model")).queryByText("Free"),
+    ).not.toBeInTheDocument();
+  });
+
   it("opens the picker after fetching and adds the checked models", async () => {
     vi.mocked(fetchModelsForConfig).mockResolvedValue([
       { id: "vendor/model-a", ownedBy: "vendor" },

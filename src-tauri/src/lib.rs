@@ -1641,6 +1641,16 @@ pub fn run() {
             commands::get_omp_current_state,
             // Profile management (项目配置方案)
             commands::list_profiles,
+            commands::list_launch_profiles,
+            commands::verify_provider_configuration,
+            commands::set_default_launch_profile,
+            commands::install_profile_dispatcher,
+            commands::profile_dispatcher_status,
+            commands::install_profile_launcher,
+            commands::profile_launcher_status,
+            commands::save_launch_profile,
+            commands::delete_launch_profile,
+            commands::launch_profile_terminal,
             commands::create_profile,
             commands::update_profile,
             commands::delete_profile,
@@ -1829,6 +1839,7 @@ pub fn run() {
             commands::list_tool_installations,
             // Provider terminal
             commands::open_provider_terminal,
+            commands::generate_provider_terminal_command,
             // Universal Provider management
             commands::get_universal_providers,
             commands::get_universal_provider,
@@ -2591,4 +2602,9 @@ mod tests {
             ExitRequestAction::CleanupAndExit
         );
     }
+}
+
+/// Run a profile in the calling terminal before initializing the desktop app.
+pub fn run_profile_cli(args: Vec<std::ffi::OsString>) -> i32 {
+    services::launch_profiles::cli(args)
 }

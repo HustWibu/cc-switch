@@ -89,3 +89,8 @@ pub use s3_sync::*;
 pub use usage::*;
 pub use webdav_sync::*;
 pub use workspace::*;
+
+mod launch_profiles;
+pub use launch_profiles::*;
+mod provider_verification;
+pub use provider_verification::*;

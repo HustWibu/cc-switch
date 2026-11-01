@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -8,6 +14,12 @@ import {
 import type { ProviderCategory, ProviderMeta } from "@/types";
 import type { AppMode } from "@/types/proxy";
 import { createTestQueryClient } from "../utils/testQueryClient";
+import { fetchModelsForConfig } from "@/lib/api/model-fetch";
+
+vi.mock("@/lib/api/model-fetch", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api/model-fetch")>()),
+  fetchModelsForConfig: vi.fn(),
+}));
 
 const settingsState = vi.hoisted(() => ({ enableStackMode: true }));
 
@@ -68,11 +80,15 @@ function renderForm(
     codexCatalog?: Array<{ model: string; displayName?: string }>;
     modeView?: AppMode;
     onStackLayoutChange?: (stackLayout: boolean) => void;
+    modelPicker?: Record<string, unknown>;
   } = {},
 ) {
   const settingsConfig =
     appId === "claude"
-      ? { env: CLAUDE_ENV }
+      ? {
+          env: CLAUDE_ENV,
+          ...(options.modelPicker ? { modelPicker: options.modelPicker } : {}),
+        }
       : {
           auth: {},
           config: CODEX_CONFIG,
@@ -115,6 +131,86 @@ async function save(onSubmit: ReturnType<typeof vi.fn>) {
   return { values, settings: JSON.parse(values.settingsConfig) };
 }
 
+describe("ProviderForm Claude Code model picker", () => {
+  beforeEach(() => {
+    settingsState.enableStackMode = false;
+  });
+
+  it("fetches upstream models, saves selected rows and labels without changing role mappings", async () => {
+    vi.mocked(fetchModelsForConfig).mockResolvedValue([
+      { id: "model-a", ownedBy: "vendor" },
+      { id: "model-b", ownedBy: "vendor" },
+    ]);
+    const onSubmit = vi.fn();
+    renderForm("claude", onSubmit);
+    const section = screen
+      .getByRole("heading", { name: "providerForm.claudeModelPicker.title" })
+      .closest("section")!;
+    fireEvent.click(
+      within(section).getByRole("button", { name: "providerForm.fetchModels" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByRole("checkbox", { name: "model-b" }));
+    fireEvent.click(
+      within(dialog).getByRole("button", {
+        name: "providerForm.modelPicker.apply",
+      }),
+    );
+    fireEvent.change(within(section).getByRole("textbox"), {
+      target: { value: "My model B" },
+    });
+    const { settings } = await save(onSubmit);
+    expect(settings.modelPicker).toEqual({
+      replaceBuiltInOptions: true,
+      options: [{ model: "model-b", label: "My model B" }],
+    });
+    expect(settings.env.ANTHROPIC_MODEL).toBe("m-a");
+    expect(settings.env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("m-s[1M]");
+  });
+
+  it("preserves existing option metadata and can restore the default picker by removing all rows", async () => {
+    const onSubmit = vi.fn();
+    renderForm("claude", onSubmit, {
+      modelPicker: {
+        replaceBuiltInOptions: false,
+        options: [
+          {
+            model: "model-a",
+            label: "A",
+            description: "Free",
+            behavesAs: "claude-sonnet-4-6",
+          },
+        ],
+      },
+    });
+    const section = screen
+      .getByRole("heading", { name: "providerForm.claudeModelPicker.title" })
+      .closest("section")!;
+    expect(within(section).getByRole("checkbox")).not.toBeChecked();
+    fireEvent.change(within(section).getByRole("textbox"), {
+      target: { value: "New A" },
+    });
+    const { settings } = await save(onSubmit);
+    expect(settings.modelPicker.options).toEqual([
+      {
+        model: "model-a",
+        label: "New A",
+        description: "Free",
+        behavesAs: "claude-sonnet-4-6",
+      },
+    ]);
+    onSubmit.mockClear();
+    fireEvent.click(
+      within(section).getByRole("button", {
+        name: "providerForm.claudeModelPicker.remove",
+      }),
+    );
+    const cleared = await save(onSubmit);
+    expect(cleared.settings.modelPicker).toBeUndefined();
+    expect(cleared.settings.env.ANTHROPIC_MODEL).toBe("m-a");
+  });
+});
+
 describe("ProviderForm Stack layout (Claude Code)", () => {
   beforeEach(() => {
     settingsState.enableStackMode = true;
@@ -128,7 +224,9 @@ describe("ProviderForm Stack layout (Claude Code)", () => {
     expect(screen.getByDisplayValue("m-s")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Model S")).toBeInTheDocument();
     // 没有 ★：第一行是默认模型，写在「模型列表」后面的「?」里。
-    expect(screen.getByRole("button", { name: "模型列表" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "模型列表" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText("providerForm.modelMappingLabel")).toBeNull();
     expect(screen.queryByText("默认兜底模型")).toBeNull();
   });
@@ -136,10 +234,14 @@ describe("ProviderForm Stack layout (Claude Code)", () => {
   it("简化面板的说明收进「?」，高级选项折叠时不挂说明", () => {
     renderForm("claude", vi.fn());
 
-    expect(screen.getByRole("button", { name: "上游格式" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "上游格式" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText(/一般无需修改/)).toBeNull();
     fireEvent.click(
-      screen.getByRole("button", { name: "providerForm.advancedOptionsToggle" }),
+      screen.getByRole("button", {
+        name: "providerForm.advancedOptionsToggle",
+      }),
     );
     expect(
       screen.getByText("以下两项只在路由、聚合模式下生效。"),
@@ -295,7 +397,9 @@ describe("ProviderForm Stack layout (Codex)", () => {
       ],
     });
 
-    expect(screen.getByRole("button", { name: "模型列表" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "模型列表" }),
+    ).toBeInTheDocument();
     // 有列表时第一行就是默认模型，不再单独显示默认模型框。
     expect(document.getElementById("codexDefaultModel")).toBeNull();
     fireEvent.change(screen.getByDisplayValue("m-1"), {

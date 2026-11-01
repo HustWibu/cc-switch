@@ -1,3 +1,4 @@
+import { ProviderVerificationDialog } from "./ProviderVerificationDialog";
 import { useMemo, useState, useEffect } from "react";
 import {
   AlertTriangle,
@@ -628,6 +629,11 @@ export function ProviderCard({
               )}
             </div>
           </div>
+          <ProviderVerificationDialog
+            appId={appId}
+            providerId={provider.id}
+            compact
+          />
           <ProviderCardActions
             providerName={provider.name}
             presentation={presentation}

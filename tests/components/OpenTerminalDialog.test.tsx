@@ -8,6 +8,8 @@ import {
 import type { Provider } from "@/types";
 
 const openTerminalMock = vi.fn();
+const generateCommandMock = vi.fn();
+const clipboardMock = vi.fn();
 const pickDirectoryMock = vi.fn();
 const agyStatusMock = vi.fn();
 const agyRunningMock = vi.fn();
@@ -15,6 +17,8 @@ const agyRunningMock = vi.fn();
 vi.mock("@/lib/api", () => ({
   providersApi: {
     openTerminal: (...args: unknown[]) => openTerminalMock(...args),
+    generateTerminalCommand: (...args: unknown[]) =>
+      generateCommandMock(...args),
   },
   settingsApi: {
     pickDirectory: (...args: unknown[]) => pickDirectoryMock(...args),
@@ -24,7 +28,7 @@ vi.mock("@/lib/api", () => ({
     agyAccountIsRunning: () => agyRunningMock(),
   },
 }));
-vi.mock("@/lib/platform", () => ({ isMac: () => true }));
+vi.mock("@/lib/platform", () => ({ isMac: () => true, isLinux: () => false }));
 
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -61,6 +65,14 @@ function renderDialog(
 describe("OpenTerminalDialog", () => {
   beforeEach(() => {
     window.localStorage.clear();
+    generateCommandMock
+      .mockReset()
+      .mockResolvedValue("sh '/tmp/cc_switch_launcher_test.sh'");
+    clipboardMock.mockReset().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: clipboardMock },
+    });
     openTerminalMock.mockReset().mockResolvedValue(true);
     pickDirectoryMock.mockReset();
     agyStatusMock.mockReset().mockResolvedValue({
@@ -73,6 +85,72 @@ describe("OpenTerminalDialog", () => {
       ],
     });
     agyRunningMock.mockReset().mockResolvedValue(false);
+  });
+
+  it("generates and copies a command with the selected options without opening a terminal", async () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(["/work/alpha"]));
+    const onClose = renderDialog();
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.change(
+      screen.getByLabelText("provider.openTerminalDialog.extraArgs"),
+      { target: { value: " --debug " } },
+    );
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "provider.openTerminalDialog.generateCommand",
+      }),
+    );
+    const preview = await screen.findByLabelText(
+      "provider.openTerminalDialog.generatedCommand",
+    );
+    expect(preview).toHaveValue("sh '/tmp/cc_switch_launcher_test.sh'");
+    expect(generateCommandMock).toHaveBeenCalledWith("p1", "claude", {
+      cwd: "/work/alpha",
+      skipPermissions: true,
+      extraArgs: "--debug",
+    });
+    expect(openTerminalMock).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "provider.openTerminalDialog.copyCommand",
+      }),
+    );
+    await waitFor(() =>
+      expect(clipboardMock).toHaveBeenCalledWith(
+        "sh '/tmp/cc_switch_launcher_test.sh'",
+      ),
+    );
+    fireEvent.change(
+      screen.getByLabelText("provider.openTerminalDialog.extraArgs"),
+      { target: { value: "--verbose" } },
+    );
+    expect(
+      screen.queryByLabelText("provider.openTerminalDialog.generatedCommand"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps the dialog available when command generation fails", async () => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(["/work/alpha"]));
+    generateCommandMock.mockRejectedValue(new Error("Cannot prepare provider"));
+    const onClose = renderDialog();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "provider.openTerminalDialog.generateCommand",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", {
+          name: "provider.openTerminalDialog.generateCommand",
+        }),
+      ).toBeEnabled(),
+    );
+    expect(
+      screen.queryByLabelText("provider.openTerminalDialog.generatedCommand"),
+    ).not.toBeInTheDocument();
+    expect(openTerminalMock).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   const agyOfficial = (accountId?: string) =>

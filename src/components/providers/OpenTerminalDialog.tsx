@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Folder, Loader2, X } from "lucide-react";
@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Notice } from "@/components/ui/notice";
 import { authApi, providersApi, settingsApi } from "@/lib/api";
 import { resolveManagedAccountId } from "@/lib/authBinding";
-import { isMac } from "@/lib/platform";
+import { isMac, isLinux } from "@/lib/platform";
 import type { AppId } from "@/lib/api/types";
 import type { Provider } from "@/types";
 import { toast } from "@/lib/toast";
@@ -202,8 +202,16 @@ export function OpenTerminalDialog({
   const [recent, setRecent] = useState<string[]>([]);
   const [dir, setDir] = useState<string | null>(null);
   const [opening, setOpening] = useState(false);
+  const [command, setCommand] = useState("");
+  const commandGeneration = useRef(0);
+  const canGenerateCommand =
+    (isMac() || isLinux()) && (appId === "claude" || appId === "codex");
   const [skipPermissions, setSkipPermissions] = useState(false);
   const [extraArgs, setExtraArgs] = useState("");
+  useEffect(() => {
+    commandGeneration.current += 1;
+    setCommand("");
+  }, [provider, appId, dir, skipPermissions, extraArgs]);
   const queryClient = useQueryClient();
 
   // Antigravity 官方卡绑了账号：打开前会把 agy 的全局登录切过去，先说清楚
@@ -287,6 +295,41 @@ export function OpenTerminalDialog({
         t("provider.terminalOpenFailed") + (message ? `: ${message}` : ""),
       );
       setOpening(false);
+    }
+  };
+
+  const handleGenerateCommand = async () => {
+    if (!provider || !dir || opening) return;
+    const generation = ++commandGeneration.current;
+    setOpening(true);
+    try {
+      const generated = await providersApi.generateTerminalCommand(
+        provider.id,
+        appId,
+        {
+          cwd: dir,
+          skipPermissions,
+          ...(extraArgs.trim() ? { extraArgs: extraArgs.trim() } : {}),
+        },
+      );
+      if (generation === commandGeneration.current) setCommand(generated);
+    } catch (error) {
+      toast.error(
+        t("provider.openTerminalDialog.generateFailed") +
+          ": " +
+          extractErrorMessage(error),
+      );
+    } finally {
+      if (generation === commandGeneration.current) setOpening(false);
+    }
+  };
+
+  const handleCopyCommand = async () => {
+    try {
+      await navigator.clipboard.writeText(command);
+      toast.success(t("provider.openTerminalDialog.commandCopied"));
+    } catch (error) {
+      toast.error(extractErrorMessage(error));
     }
   };
 
@@ -451,6 +494,27 @@ export function OpenTerminalDialog({
               {t("provider.openTerminalDialog.extraArgsHint")}
             </p>
           </div>
+          {command && (
+            <div className="space-y-2">
+              <Input
+                aria-label={t("provider.openTerminalDialog.generatedCommand")}
+                readOnly
+                value={command}
+                className="font-mono"
+                onFocus={(event) => event.target.select()}
+              />
+              <p className="text-caption text-fg-3">
+                {t("provider.openTerminalDialog.commandHint")}
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void handleCopyCommand()}
+              >
+                {t("provider.openTerminalDialog.copyCommand")}
+              </Button>
+            </div>
+          )}
         </div>
 
         <DialogFooter>
@@ -462,6 +526,16 @@ export function OpenTerminalDialog({
           >
             {t("common.cancel")}
           </Button>
+          {canGenerateCommand && (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={!dir || opening}
+              onClick={() => void handleGenerateCommand()}
+            >
+              {t("provider.openTerminalDialog.generateCommand")}
+            </Button>
+          )}
           <Button
             type="button"
             disabled={!dir || opening}

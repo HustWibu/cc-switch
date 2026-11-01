@@ -936,6 +936,10 @@ export function OpenCodeFormFields({
                     {fetchedModels.length > 0 && (
                       <ModelDropdown
                         models={fetchedModels}
+                        metadataSource={{
+                          baseUrl,
+                          presets: presetModelSources,
+                        }}
                         onSelect={(id) => {
                           handleModelIdChange(key, id);
                           fillModelMetadataFor(id);

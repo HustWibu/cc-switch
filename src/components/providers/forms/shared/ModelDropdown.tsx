@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,16 +17,35 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import type { FetchedModel } from "@/lib/api/model-fetch";
+import { modelsDevQueryOptions } from "@/lib/modelsDev";
+import { resolveModelMetadata } from "@/lib/modelMetadata";
+import type { ModelMetadataSourceProps } from "../FetchedModelPicker";
 
 export function ModelDropdown({
   models,
   onSelect,
+  metadataSource,
 }: {
   models: FetchedModel[];
   onSelect: (id: string) => void;
+  metadataSource?: ModelMetadataSourceProps;
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
+  const { data: modelsDev } = useQuery({
+    ...modelsDevQueryOptions,
+    enabled: open && !!metadataSource,
+  });
+  const presets = metadataSource?.presets?.();
+  const isFree = (id: string) => {
+    if (!metadataSource) return false;
+    const cost = resolveModelMetadata(id, {
+      baseUrl: metadataSource.baseUrl,
+      presets,
+      modelsDev,
+    })?.cost;
+    return cost?.input === 0 && cost.output === 0;
+  };
 
   // Group models by vendor; missing ownedBy falls back to "Other"
   const grouped: Record<string, FetchedModel[]> = {};
@@ -86,7 +106,12 @@ export function ModelDropdown({
                       setOpen(false);
                     }}
                   >
-                    {m.id}
+                    <span className="min-w-0 flex-1 truncate">{m.id}</span>
+                    {isFree(m.id) && (
+                      <span className="shrink-0 rounded-full bg-emerald-500/10 px-2 py-0.5 text-caption font-medium text-emerald-700 dark:text-emerald-400">
+                        Free
+                      </span>
+                    )}
                   </CommandItem>
                 ))}
               </CommandGroup>

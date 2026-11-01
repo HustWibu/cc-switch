@@ -58,6 +58,10 @@ import {
 } from "./ClaudeStackModelsField";
 import { LocalProxyRequestOverridesField } from "./LocalProxyRequestOverridesField";
 import {
+  ClaudeModelPickerField,
+  type ClaudeModelPickerConfig,
+} from "./ClaudeModelPickerField";
+import {
   ClaudeReasoningEffortField,
   type ClaudeReasoningEffortChoice,
 } from "./ClaudeReasoningEffortField";
@@ -186,6 +190,8 @@ interface ClaudeFormFieldsProps {
   /** Stack 布局的模型列表（第一行是这家的默认模型）。 */
   stackModelRows?: ClaudeStackModelRow[];
   onStackModelRowsChange?: (rows: ClaudeStackModelRow[]) => void;
+  modelPicker?: unknown;
+  onModelPickerChange?: (value: ClaudeModelPickerConfig | undefined) => void;
 }
 
 export function ClaudeFormFields({
@@ -258,6 +264,8 @@ export function ClaudeFormFields({
   directModeFormatNotice,
   stackModelRows = [],
   onStackModelRowsChange,
+  modelPicker,
+  onModelPickerChange,
 }: ClaudeFormFieldsProps) {
   const { t } = useTranslation();
   const hasRequestOverrides = Boolean(
@@ -313,9 +321,18 @@ export function ClaudeFormFields({
   // 通用模型获取（非 Copilot 供应商）
   const [fetchedModels, setFetchedModels] = useState<FetchedModel[]>([]);
   const [isFetchingModels, setIsFetchingModels] = useState(false);
+  const modelFetchGeneration = useRef(0);
+  useEffect(() => {
+    setFetchedModels([]);
+    setIsFetchingModels(false);
+    return () => {
+      modelFetchGeneration.current += 1;
+    };
+  }, [baseUrl, apiKey, isFullUrl, customUserAgent, localProxyHeadersOverride]);
 
-  // 聚合布局的模型列表拉取成功后直接打开选择弹窗，不再提示成功。
-  const opensModelPicker = variant === "stack" && !!onStackModelRowsChange;
+  // Model pickers open after a successful fetch, so they don't need a success toast.
+  const opensModelPicker =
+    variant === "stack" ? !!onStackModelRowsChange : !!onModelPickerChange;
   const showModelFetchResult = useCallback(
     (count: number) => {
       if (count === 0) {
@@ -343,6 +360,8 @@ export function ClaudeFormFields({
     });
     const modelsUrl = matchedPreset?.modelsUrl;
 
+    const generation = ++modelFetchGeneration.current;
+    setFetchedModels([]);
     setIsFetchingModels(true);
     fetchModelsForConfig(
       baseUrl,
@@ -355,14 +374,21 @@ export function ClaudeFormFields({
       },
     )
       .then((models) => {
-        setFetchedModels(models);
+        if (generation !== modelFetchGeneration.current) return;
+        setFetchedModels([
+          ...new Map(models.map((model) => [model.id, model])).values(),
+        ]);
         showModelFetchResult(models.length);
       })
       .catch((err) => {
+        if (generation !== modelFetchGeneration.current) return;
         console.warn("[ModelFetch] Failed:", err);
         showFetchModelsError(err, t);
       })
-      .finally(() => setIsFetchingModels(false));
+      .finally(() => {
+        if (generation === modelFetchGeneration.current)
+          setIsFetchingModels(false);
+      });
   }, [
     baseUrl,
     apiKey,
@@ -1012,15 +1038,14 @@ export function ClaudeFormFields({
     </>
   );
 
+  const pickerFetchedModels: FetchedModel[] = isCopilotPreset
+    ? copilotModels.map((m) => ({ id: m.id, ownedBy: m.vendor || null }))
+    : isCodexOauthPreset
+      ? codexOauthModels
+      : isXaiOauthPreset
+        ? xaiOauthModels
+        : fetchedModels;
   if (variant === "stack") {
-    // 批量勾选模型用当前预设对应的那份上游列表。
-    const stackFetchedModels: FetchedModel[] = isCopilotPreset
-      ? copilotModels.map((m) => ({ id: m.id, ownedBy: m.vendor || null }))
-      : isCodexOauthPreset
-        ? codexOauthModels
-        : isXaiOauthPreset
-          ? xaiOauthModels
-          : fetchedModels;
     // 认证字段只对 Anthropic 格式、自己填 Key 的供应商有意义，放在 Key 旁边。
     const showAuthField =
       shouldShowApiKey &&
@@ -1044,7 +1069,7 @@ export function ClaudeFormFields({
           <ClaudeStackModelsField
             rows={stackModelRows}
             onRowsChange={onStackModelRowsChange}
-            fetchedModels={stackFetchedModels}
+            fetchedModels={pickerFetchedModels}
             onFetchModels={handleModelFetchClick}
             isFetchingModels={modelFetchLoading}
             baseUrl={baseUrl}
@@ -1095,6 +1120,17 @@ export function ClaudeFormFields({
       {templateSection}
       {endpointSection}
       {speedTestModal}
+
+      {shouldShowModelSelector && onModelPickerChange && (
+        <ClaudeModelPickerField
+          value={modelPicker}
+          onChange={onModelPickerChange}
+          models={pickerFetchedModels}
+          onFetch={handleModelFetchClick}
+          isFetching={modelFetchLoading}
+          baseUrl={baseUrl}
+        />
+      )}
 
       {shouldShowModelSelector && (
         <Collapsible

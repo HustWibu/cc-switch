@@ -209,6 +209,18 @@ export const providersApi = {
    * 任何提供商都可以打开终端，不受是否为当前激活提供商的限制
    * 终端会使用该提供商特定的 API 配置，不影响全局设置
    */
+  async generateTerminalCommand(
+    providerId: string,
+    appId: AppId,
+    options?: OpenTerminalOptions,
+  ): Promise<string> {
+    return invoke("generate_provider_terminal_command", {
+      providerId,
+      app: appId,
+      ...options,
+    });
+  },
+
   async openTerminal(
     providerId: string,
     appId: AppId,

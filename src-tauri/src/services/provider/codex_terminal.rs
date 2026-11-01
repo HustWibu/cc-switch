@@ -105,7 +105,7 @@ pub(crate) fn catalog_override(path: &str) -> String {
     format!("model_catalog_json={}", toml_string(path))
 }
 
-fn build(provider: &Provider, live_text: &str) -> Result<CodexTerminalLaunch, AppError> {
+pub(crate) fn build(provider: &Provider, live_text: &str) -> Result<CodexTerminalLaunch, AppError> {
     let live = live_text.parse::<DocumentMut>().map_err(|err| {
         AppError::localized(
             "codex.terminal.live_unparsable",

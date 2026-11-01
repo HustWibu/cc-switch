@@ -67,6 +67,13 @@ impl ProxyState {
     }
 }
 
+impl ProxyState {
+    /// In-process diagnostic forwarding; never starts a listener or changes live routing.
+    pub(crate) fn for_verification(db: Arc<Database>, handle: Option<tauri::AppHandle>) -> Self {
+        ProxyServer::new(ProxyConfig::default(), db, handle).state
+    }
+}
+
 impl ProxyServer {
     pub fn new(
         config: ProxyConfig,
@@ -300,6 +307,10 @@ impl ProxyServer {
         Router::new()
             // 健康检查
             .route("/health", get(handlers::health_check))
+            .route(
+                "/profiles/v1/messages",
+                post(handlers::handle_profile_messages),
+            )
             .route("/status", get(handlers::get_status))
             // Claude API (支持带前缀和不带前缀两种格式)
             .route("/v1/messages", post(handlers::handle_messages))

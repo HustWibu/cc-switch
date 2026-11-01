@@ -250,6 +250,33 @@ pub async fn handle_messages(
     handle_messages_for_app(state, request, AppType::Claude, "Claude", "claude", None).await
 }
 
+/// Dedicated route: missing credentials cannot enter ordinary global routing.
+pub async fn handle_profile_messages(
+    State(state): State<ProxyState>,
+    mut request: axum::extract::Request,
+) -> Result<axum::response::Response, ProxyError> {
+    let token = extract_gateway_token(request.headers())
+        .filter(|token| token.starts_with("ccsp_"))
+        .ok_or_else(|| ProxyError::AuthError("Profile session credential required".into()))?;
+    let provider = state
+        .db
+        .resolve_launch_session(&crate::services::launch_profiles::digest(token.as_bytes()))
+        .map_err(|e| ProxyError::AuthError(e.to_string()))?;
+    request.extensions_mut().insert(ProfileTarget(provider));
+    handle_messages_for_app(
+        state,
+        request,
+        AppType::Claude,
+        "Claude profile",
+        "claude",
+        Some("/profiles"),
+    )
+    .await
+}
+
+#[derive(Clone)]
+struct ProfileTarget(crate::provider::Provider);
+
 pub async fn handle_claude_desktop_messages(
     State(state): State<ProxyState>,
     request: axum::extract::Request,
@@ -325,9 +352,22 @@ async fn handle_messages_for_app(
         .to_bytes();
     let mut body: Value = serde_json::from_slice(&body_bytes)
         .map_err(|e| ProxyError::Internal(format!("Failed to parse request body: {e}")))?;
-    let stack = match resolve_stack_target(&state, &app_type, &mut body) {
-        Ok(stack) => stack,
-        Err(rejected) => return Ok(*rejected),
+    let stack = if let Some(target) = extensions.get::<ProfileTarget>() {
+        let model = body
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .to_owned();
+        Some(crate::mode::stack::StackTarget {
+            provider: target.0.clone(),
+            upstream_model: model.clone(),
+            original_model: model,
+        })
+    } else {
+        match resolve_stack_target(&state, &app_type, &mut body) {
+            Ok(stack) => stack,
+            Err(rejected) => return Ok(*rejected),
+        }
     };
 
     let mut ctx = RequestContext::new(
@@ -4814,5 +4854,173 @@ mod stack_tests {
         .await
         .expect("models");
         assert_eq!(body, json!({ "data": [], "has_more": false }));
+    }
+}
+
+#[cfg(test)]
+mod launch_profile_tests {
+    use super::*;
+    use crate::{
+        database::Database,
+        provider::Provider,
+        services::launch_profiles::{digest, fingerprint, LaunchProfile, RoutingMode},
+    };
+    use std::sync::Arc;
+
+    async fn upstream(
+        label: &'static str,
+        secret: &'static str,
+    ) -> (String, tokio::task::JoinHandle<()>) {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = axum::Router::new().route("/v1/messages", axum::routing::post(move |headers: axum::http::HeaderMap| async move {
+            // A profile capability must be replaced with upstream credentials.
+            assert_eq!(headers.get("authorization").unwrap(), &format!("Bearer {secret}"));
+            Json(json!({"id":label,"type":"message","role":"assistant","model":"mock","content":[{"type":"text","text":label}],"stop_reason":"end_turn","usage":{"input_tokens":1,"output_tokens":1}}))
+        }));
+        let task = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}"), task)
+    }
+
+    fn bind(db: &Database, id: &str, url: &str, secret: &str) -> String {
+        let p = Provider::with_id(
+            id.into(),
+            id.into(),
+            json!({"env":{"ANTHROPIC_BASE_URL":url,"ANTHROPIC_AUTH_TOKEN":secret}}),
+            None,
+        );
+        db.save_provider("claude", &p).unwrap();
+        let profile = db
+            .save_launch_profile(LaunchProfile {
+                id: id.into(),
+                name: id.into(),
+                launcher: format!("claude-{id}"),
+                provider_id: id.into(),
+                runtime: crate::services::launch_profiles::LaunchRuntime::Claude,
+                config_dir: format!("/private/mock-profiles/{id}").into(),
+                routing_mode: RoutingMode::Proxy,
+                model: None,
+                revision: 0,
+                created_at: 0,
+                is_default: false,
+                updated_at: 0,
+            })
+            .unwrap();
+        let token = format!("ccsp_test-{id}");
+        db.issue_launch_session(
+            &digest(token.as_bytes()),
+            &profile,
+            &fingerprint(&p).unwrap(),
+        )
+        .unwrap();
+        token
+    }
+
+    async fn send(state: ProxyState, token: Option<&str>) -> Result<Value, ProxyError> {
+        let mut request = axum::http::Request::builder()
+            .method("POST")
+            .uri("/profiles/v1/messages")
+            .header("content-type", "application/json");
+        if let Some(token) = token {
+            request = request.header("authorization", format!("Bearer {token}"));
+        }
+        let response = handle_profile_messages(State(state), request.body(axum::body::Body::from(json!({"model":"mock","max_tokens":8,"messages":[{"role":"user","content":"hello"}]}).to_string())).unwrap()).await?;
+        let status = response.status();
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "{}",
+            String::from_utf8_lossy(&bytes)
+        );
+        Ok(serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn launch_profile_proxy_restart_preserves_route_and_rejects_missing_auth() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        use crate::proxy::{server::ProxyServer, types::ProxyConfig};
+        let db = Arc::new(Database::memory().unwrap());
+        let (url, task) = upstream("restart", "restart-secret").await;
+        let token = bind(&db, "restart", &url, "restart-secret");
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let mut port = 0;
+        for _ in 0..2 {
+            let config = ProxyConfig {
+                listen_port: port,
+                ..Default::default()
+            };
+            let server = ProxyServer::new(config, db.clone(), None);
+            port = server.start().await.unwrap().port;
+            let endpoint = format!("http://127.0.0.1:{port}/profiles/v1/messages");
+            let body = json!({"model":"mock","max_tokens":8,"messages":[{"role":"user","content":"hello"}]});
+            assert_eq!(
+                client
+                    .post(&endpoint)
+                    .json(&body)
+                    .send()
+                    .await
+                    .unwrap()
+                    .status(),
+                reqwest::StatusCode::UNAUTHORIZED
+            );
+            let response = client
+                .post(&endpoint)
+                .bearer_auth(&token)
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), reqwest::StatusCode::OK);
+            assert_eq!(response.json::<Value>().await.unwrap()["id"], "restart");
+            server.stop().await.unwrap();
+            let fresh_client = reqwest::Client::builder().no_proxy().build().unwrap();
+            assert!(fresh_client
+                .post(&endpoint)
+                .json(&body)
+                .send()
+                .await
+                .is_err());
+        }
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn launch_profiles_concurrent_requests_ignore_global_switch_and_fail_closed() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let db = Arc::new(Database::memory().unwrap());
+        let (a_url, a_task) = upstream("a", "upstream-a").await;
+        let (b_url, b_task) = upstream("b", "upstream-b").await;
+        let a = bind(&db, "a", &a_url, "upstream-a");
+        let b = bind(&db, "b", &b_url, "upstream-b");
+        let state = ProxyState::for_test(db.clone());
+        db.set_current_provider("claude", "b").unwrap();
+        let (ra, rb) = tokio::join!(send(state.clone(), Some(&a)), send(state.clone(), Some(&b)));
+        assert_eq!(ra.unwrap()["id"], "a");
+        assert_eq!(rb.unwrap()["id"], "b");
+        db.set_current_provider("claude", "a").unwrap();
+        assert_eq!(send(state.clone(), Some(&b)).await.unwrap()["id"], "b");
+        assert!(matches!(
+            send(state.clone(), None).await,
+            Err(ProxyError::AuthError(_))
+        ));
+        assert!(matches!(
+            send(state.clone(), Some("ccsp_unknown")).await,
+            Err(ProxyError::AuthError(_))
+        ));
+        db.delete_provider("claude", "a").unwrap();
+        assert!(matches!(
+            send(state.clone(), Some(&a)).await,
+            Err(ProxyError::AuthError(_))
+        ));
+        db.delete_launch_profile("b").unwrap();
+        assert!(matches!(
+            send(state, Some(&b)).await,
+            Err(ProxyError::AuthError(_))
+        ));
+        a_task.abort();
+        b_task.abort();
     }
 }

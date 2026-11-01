@@ -5214,6 +5214,59 @@ pub async fn open_provider_terminal(
     #[allow(non_snake_case)] skipPermissions: Option<bool>,
     #[allow(non_snake_case)] extraArgs: Option<String>,
 ) -> Result<bool, String> {
+    let (launch, launch_cwd) = prepare_provider_terminal_launch(
+        state,
+        agy_accounts,
+        app,
+        providerId,
+        cwd,
+        skipPermissions,
+        extraArgs,
+    )
+    .await?;
+    launch_provider_terminal(&launch, launch_cwd.as_deref())
+        .map_err(|e| format!("启动终端失败: {e}"))?;
+    Ok(true)
+}
+
+/// Prepare a one-use command without opening a terminal or exposing credentials in it.
+#[allow(non_snake_case)]
+#[tauri::command]
+pub async fn generate_provider_terminal_command(
+    state: State<'_, crate::store::AppState>,
+    agy_accounts: State<'_, crate::commands::AgyAccountState>,
+    app: String,
+    providerId: String,
+    cwd: Option<String>,
+    skipPermissions: Option<bool>,
+    extraArgs: Option<String>,
+) -> Result<String, String> {
+    if !matches!(app.as_str(), "claude" | "codex") {
+        return Err("Command generation is supported for Claude Code and Codex".into());
+    }
+    let (launch, launch_cwd) = prepare_provider_terminal_launch(
+        state,
+        agy_accounts,
+        app,
+        providerId,
+        cwd,
+        skipPermissions,
+        extraArgs,
+    )
+    .await?;
+    provider_terminal_command(&launch, launch_cwd.as_deref())
+}
+
+#[allow(non_snake_case)]
+async fn prepare_provider_terminal_launch(
+    state: State<'_, crate::store::AppState>,
+    agy_accounts: State<'_, crate::commands::AgyAccountState>,
+    app: String,
+    providerId: String,
+    cwd: Option<String>,
+    skipPermissions: Option<bool>,
+    extraArgs: Option<String>,
+) -> Result<(ProviderLaunch, Option<PathBuf>), String> {
     let app_type = AppType::from_str(&app).map_err(|e| e.to_string())?;
     let launch_cwd = resolve_launch_cwd(cwd)?;
     // 先拆参数：填错了直接报错，不必等到切完 agy 登录、写完临时文件。
@@ -5269,10 +5322,7 @@ pub async fn open_provider_terminal(
         return Err(e);
     }
 
-    launch_provider_terminal(&launch, launch_cwd.as_deref())
-        .map_err(|e| format!("启动终端失败: {e}"))?;
-
-    Ok(true)
+    Ok((launch, launch_cwd))
 }
 
 /// 从提供商配置中提取环境变量
@@ -5769,7 +5819,7 @@ fn unique_temp_path(stem: &str, ext: &str) -> PathBuf {
 fn launch_provider_terminal(launch: &ProviderLaunch, cwd: Option<&Path>) -> Result<(), String> {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
-        let (script_file, env_file) = write_unix_launcher(launch, cwd)?;
+        let (script_file, env_file) = write_unix_launcher(launch, cwd, true)?;
         #[cfg(target_os = "macos")]
         let result = launch_macos_terminal(&script_file);
         #[cfg(target_os = "linux")]
@@ -5797,6 +5847,25 @@ fn launch_provider_terminal(launch: &ProviderLaunch, cwd: Option<&Path>) -> Resu
     {
         let _ = (launch, cwd);
         Err("不支持的操作系统".to_string())
+    }
+}
+
+fn provider_terminal_command(
+    launch: &ProviderLaunch,
+    cwd: Option<&Path>,
+) -> Result<String, String> {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let (script_file, _) = write_unix_launcher(launch, cwd, false)?;
+        Ok(format!(
+            "sh {}",
+            shell_single_quote(&script_file.to_string_lossy())
+        ))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        let _ = (launch, cwd);
+        Err("Command generation is supported on macOS and Linux".into())
     }
 }
 
@@ -5870,6 +5939,7 @@ fn build_unix_launcher_script(
     cwd: Option<&Path>,
     script_file: &Path,
     env_file: Option<&Path>,
+    keep_shell: bool,
 ) -> String {
     let mut temp_files: Vec<String> = launch
         .cleanup
@@ -5903,6 +5973,9 @@ fn build_unix_launcher_script(
         cwd,
     ));
     script.push('\n');
+    if !keep_shell {
+        script.push_str("launch_status=$?\n");
+    }
     // exec 不会触发 EXIT trap，所以在换成交互 shell 之前自己删。
     script.push_str(&remove_temp_files);
     script.push('\n');
@@ -5912,9 +5985,13 @@ fn build_unix_launcher_script(
     if !launch_vars.is_empty() {
         script.push_str(&format!("unset {}\n", launch_vars.join(" ")));
     }
-    script.push_str(&build_final_shell_cd_command(shell, cwd));
-    script.push_str(&build_exec_line(shell, cwd));
-    script.push('\n');
+    if keep_shell {
+        script.push_str(&build_final_shell_cd_command(shell, cwd));
+        script.push_str(&build_exec_line(shell, cwd));
+        script.push('\n');
+    } else {
+        script.push_str("exit \"$launch_status\"\n");
+    }
     script
 }
 
@@ -5923,6 +6000,7 @@ fn build_unix_launcher_script(
 fn write_unix_launcher(
     launch: &ProviderLaunch,
     cwd: Option<&Path>,
+    keep_shell: bool,
 ) -> Result<(PathBuf, PathBuf), String> {
     use std::os::unix::fs::PermissionsExt;
 
@@ -5941,6 +6019,7 @@ fn write_unix_launcher(
         cwd,
         &script_file,
         has_env.then_some(env_file.as_path()),
+        keep_shell,
     );
     std::fs::write(&script_file, &script_content).map_err(|e| format!("写入启动脚本失败: {e}"))?;
     std::fs::set_permissions(&script_file, std::fs::Permissions::from_mode(0o700))
@@ -7368,6 +7447,72 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn generated_terminal_command_uses_private_files_and_preserves_launch_options() {
+        use std::os::unix::fs::PermissionsExt;
+        let mut launch = agy_key_launch();
+        launch.skip_permissions();
+        launch
+            .append_user_args(vec!["--debug".into(), "quoted argument".into()])
+            .unwrap();
+        let cwd = Path::new("/tmp/project O'Brien");
+        let command = provider_terminal_command(&launch, Some(cwd)).unwrap();
+        let words = split_launch_args(&command).unwrap();
+        assert_eq!(words[0], "sh");
+        let script_path = Path::new(&words[1]);
+        let script = std::fs::read_to_string(script_path).unwrap();
+        assert!(!command.contains("GEMINI_API_KEY"));
+        assert!(!script.contains("k'$(echo no)`x`%PATH%"));
+        assert!(script.contains("--dangerously-skip-permissions"));
+        assert!(script.contains("--debug"));
+        assert!(script.contains("quoted argument"));
+        assert!(script.contains("project O"));
+        assert!(script.ends_with("exit \"$launch_status\"\n"));
+        assert!(script.contains("launch_status=$?"));
+        assert_eq!(
+            std::fs::metadata(script_path).unwrap().permissions().mode() & 0o777,
+            0o700
+        );
+        let env_line = script.lines().find(|line| line.starts_with(". ")).unwrap();
+        let env_words = split_launch_args(env_line).unwrap();
+        let env_path = Path::new(&env_words[1]);
+        assert_eq!(
+            std::fs::metadata(env_path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        assert!(std::fs::read_to_string(env_path)
+            .unwrap()
+            .contains("CC_SWITCH_LAUNCH_ENV_0="));
+        std::fs::remove_file(script_path).unwrap();
+        std::fs::remove_file(env_path).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn generated_terminal_command_returns_to_the_shell_and_removes_private_files() {
+        let launch = ProviderLaunch {
+            program: "/bin/sh",
+            args: vec!["-c".into(), "exit 7".into()],
+            ..agy_key_launch()
+        };
+        let cwd = tempfile::tempdir().unwrap();
+        let command = provider_terminal_command(&launch, Some(cwd.path())).unwrap();
+        let words = split_launch_args(&command).unwrap();
+        let script_path = Path::new(&words[1]);
+        let script = std::fs::read_to_string(script_path).unwrap();
+        let env_words =
+            split_launch_args(script.lines().find(|line| line.starts_with(". ")).unwrap()).unwrap();
+        let env_path = Path::new(&env_words[1]);
+        let output = std::process::Command::new("sh")
+            .arg(script_path)
+            .output()
+            .unwrap();
+        assert_eq!(output.status.code(), Some(7));
+        assert!(!script_path.exists());
+        assert!(!env_path.exists());
+    }
+
     #[test]
     fn launch_command_keeps_secrets_out_of_the_command_line() {
         let launch = agy_key_launch();
@@ -7597,7 +7742,7 @@ mod tests {
         std::fs::write(&env_file, unix_launch_env_file(&launch)).unwrap();
         // Replace the final interactive shell with a no-op so the test returns.
         let content =
-            build_unix_launcher_script(&launch, "/bin/bash", None, &script, Some(&env_file))
+            build_unix_launcher_script(&launch, "/bin/bash", None, &script, Some(&env_file), true)
                 .replace("exec '/bin/bash'", "exit 0 #");
         std::fs::write(&script, content).unwrap();
         let status = std::process::Command::new("sh")
