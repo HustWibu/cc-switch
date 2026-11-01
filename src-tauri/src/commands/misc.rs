@@ -5244,6 +5244,32 @@ pub async fn generate_provider_terminal_command(
     if !matches!(app.as_str(), "claude" | "codex") {
         return Err("Command generation is supported for Claude Code and Codex".into());
     }
+    if let Some(profile) =
+        crate::services::launch_profiles::profile_for_provider(&state.db, &app, &providerId)
+            .map_err(|error| error.to_string())?
+    {
+        let launch_cwd = resolve_launch_cwd(cwd)?;
+        let extra_args = split_launch_args(extraArgs.as_deref().unwrap_or_default())?;
+        crate::services::launch_profiles::provider(&state.db, &profile)
+            .map_err(|error| error.to_string())?;
+        if profile.routing_mode == crate::services::launch_profiles::RoutingMode::Proxy {
+            state.proxy_service.start().await?;
+        }
+        let dispatcher = crate::services::profile_launchers::dispatcher_status();
+        let executable = if dispatcher.installed {
+            dispatcher.path
+        } else {
+            std::env::current_exe().map_err(|error| error.to_string())?
+        };
+        return profile_terminal_command(
+            &profile,
+            &executable,
+            dispatcher.installed,
+            launch_cwd.as_deref(),
+            skipPermissions == Some(true),
+            &extra_args,
+        );
+    }
     let (launch, launch_cwd) = prepare_provider_terminal_launch(
         state,
         agy_accounts,
@@ -5303,13 +5329,17 @@ async fn prepare_provider_terminal_launch(
                 None => {
                     let env_vars =
                         extract_env_vars_from_config(&provider.settings_config, &app_type);
-                    claude_terminal_launch(&env_vars, &providerId)?
+                    claude_terminal_launch(
+                        &env_vars,
+                        &providerId,
+                        provider.settings_config.get("modelPicker"),
+                    )?
                 }
             }
         }
         _ => {
             let env_vars = extract_env_vars_from_config(&provider.settings_config, &app_type);
-            claude_terminal_launch(&env_vars, &providerId)?
+            claude_terminal_launch(&env_vars, &providerId, None)?
         }
     };
     if skipPermissions == Some(true) {
@@ -5625,9 +5655,10 @@ fn codex_launch(
 fn claude_terminal_launch(
     env_vars: &[(String, String)],
     provider_id: &str,
+    model_picker: Option<&serde_json::Value>,
 ) -> Result<ProviderLaunch, String> {
     let config_file = unique_temp_path(&format!("claude_{provider_id}"), "json");
-    write_claude_config(&config_file, env_vars)?;
+    write_claude_config(&config_file, env_vars, model_picker)?;
     let config_name = config_file
         .file_name()
         .map(|name| name.to_string_lossy().into_owned())
@@ -5869,6 +5900,48 @@ fn provider_terminal_command(
     }
 }
 
+fn profile_terminal_command(
+    profile: &crate::services::launch_profiles::LaunchProfile,
+    executable: &Path,
+    dispatcher: bool,
+    cwd: Option<&Path>,
+    skip_permissions: bool,
+    extra_args: &[String],
+) -> Result<String, String> {
+    if !cfg!(any(target_os = "macos", target_os = "linux")) {
+        return Err("Command generation is supported on macOS and Linux".into());
+    }
+    let mut words = vec![shell_single_quote(&executable.to_string_lossy())];
+    if dispatcher {
+        words.push(shell_single_quote(&profile.launcher));
+    } else {
+        words.extend([
+            "profile".into(),
+            "run-id".into(),
+            shell_single_quote(&profile.id),
+        ]);
+    }
+    if skip_permissions {
+        words.push(
+            if profile.runtime == crate::services::launch_profiles::LaunchRuntime::Codex {
+                "--dangerously-bypass-approvals-and-sandbox"
+            } else {
+                "--dangerously-skip-permissions"
+            }
+            .into(),
+        );
+    }
+    words.extend(extra_args.iter().map(|arg| shell_single_quote(arg)));
+    let command = words.join(" ");
+    Ok(match cwd {
+        Some(cwd) => format!(
+            "cd {} && {command}",
+            shell_single_quote(&cwd.to_string_lossy())
+        ),
+        None => command,
+    })
+}
+
 /// shell 里的一个词：只含安全字符时原样写，否则加单引号。
 #[cfg_attr(windows, allow(dead_code))]
 fn shell_word(value: &str) -> String {
@@ -6031,6 +6104,7 @@ fn write_unix_launcher(
 fn write_claude_config(
     config_file: &std::path::Path,
     env_vars: &[(String, String)],
+    model_picker: Option<&serde_json::Value>,
 ) -> Result<(), String> {
     let mut config_obj = serde_json::Map::new();
     let mut env_obj = serde_json::Map::new();
@@ -6040,6 +6114,9 @@ fn write_claude_config(
     }
 
     config_obj.insert("env".to_string(), serde_json::Value::Object(env_obj));
+    if let Some(picker) = model_picker {
+        config_obj.insert("modelPicker".to_string(), picker.clone());
+    }
 
     let config_json =
         serde_json::to_string_pretty(&config_obj).map_err(|e| format!("序列化配置失败: {e}"))?;
@@ -7788,7 +7865,8 @@ mod tests {
     fn claude_terminal_config_is_private() {
         use std::os::unix::fs::PermissionsExt;
         let launch =
-            claude_terminal_launch(&[("ANTHROPIC_AUTH_TOKEN".into(), "t".into())], "p").unwrap();
+            claude_terminal_launch(&[("ANTHROPIC_AUTH_TOKEN".into(), "t".into())], "p", None)
+                .unwrap();
         let file = &launch.cleanup[0];
         assert_eq!(
             std::fs::metadata(file).unwrap().permissions().mode() & 0o777,
@@ -7802,6 +7880,80 @@ mod tests {
             ]
         );
         std::fs::remove_file(file).unwrap();
+    }
+
+    #[test]
+    fn claude_terminal_preserves_the_selected_model_picker() {
+        let picker = serde_json::json!({
+            "replaceBuiltInOptions": true,
+            "options": [{"model": "gpt-6-astra", "label": "GPT", "description": "Selected"}]
+        });
+        let launch = claude_terminal_launch(
+            &[("ANTHROPIC_MODEL".into(), "gpt-6-astra".into())],
+            "picker-test",
+            Some(&picker),
+        )
+        .unwrap();
+        let file = &launch.cleanup[0];
+        let settings: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(file).unwrap()).unwrap();
+        assert_eq!(settings["modelPicker"], picker);
+        assert_eq!(settings["env"]["ANTHROPIC_MODEL"], "gpt-6-astra");
+        std::fs::remove_file(file).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn generated_profile_command_preserves_profile_directory_and_literal_arguments() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let executable = temp.path().join("cc switch");
+        std::fs::write(&executable, "#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$@\"\n").unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let profile = serde_json::from_value(serde_json::json!({
+            "id": "profile-id", "name": "Profile", "launcher": "claude-profile",
+            "providerId": "provider", "configDir": "/tmp/generated-profile",
+            "routingMode": "proxy", "model": null
+        }))
+        .unwrap();
+        let extra = vec![
+            "--resume".into(),
+            "literal $(touch injected) 'quoted'".into(),
+        ];
+        for dispatcher in [true, false] {
+            let command = profile_terminal_command(
+                &profile,
+                &executable,
+                dispatcher,
+                Some(temp.path()),
+                true,
+                &extra,
+            )
+            .unwrap();
+            let output = std::process::Command::new("sh")
+                .args(["-c", &command])
+                .output()
+                .unwrap();
+            assert!(output.status.success());
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            let lines: Vec<_> = stdout.lines().collect();
+            assert_eq!(
+                Path::new(lines[0]).canonicalize().unwrap(),
+                temp.path().canonicalize().unwrap()
+            );
+            let mut expected = if dispatcher {
+                vec!["claude-profile"]
+            } else {
+                vec!["profile", "run-id", "profile-id"]
+            };
+            expected.extend([
+                "--dangerously-skip-permissions",
+                "--resume",
+                "literal $(touch injected) 'quoted'",
+            ]);
+            assert_eq!(&lines[1..], expected.as_slice());
+            assert!(!temp.path().join("injected").exists());
+        }
     }
 
     #[test]

@@ -62,7 +62,7 @@ function renderClaude(
   baseUrl = "https://relay.example",
   extraEnv: Record<string, string> = {},
 ) {
-  return render(
+  const result = render(
     <QueryClientProvider client={createTestQueryClient()}>
       <ProviderForm
         appId="claude"
@@ -86,6 +86,13 @@ function renderClaude(
       />
     </QueryClientProvider>,
   );
+  // Role-specific hints now live in the Models section.
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "providerForm.claudeModelPicker.roleDefaults",
+    }),
+  );
+  return result;
 }
 
 /** 有已配置的高级值时高级区会自动展开，只在折叠时点开，免得点一下反而收起。 */

@@ -136,6 +136,31 @@ describe("ProviderForm Claude Code model picker", () => {
     settingsState.enableStackMode = false;
   });
 
+  it("groups the picker and role defaults under Models with a single fetch action", () => {
+    renderForm("claude", vi.fn());
+    const section = screen
+      .getByRole("heading", { name: "providerForm.claudeModelPicker.title" })
+      .closest("section")!;
+    const roles = within(section).getByRole("button", {
+      name: "providerForm.claudeModelPicker.roleDefaults",
+    });
+    expect(roles).toHaveAttribute("aria-expanded", "false");
+    expect(
+      screen.getAllByRole("button", { name: "providerForm.fetchModels" }),
+    ).toHaveLength(1);
+    expect(
+      screen.getByRole("button", {
+        name: "providerForm.advancedOptionsToggle",
+      }),
+    ).toHaveAttribute("aria-expanded", "false");
+    fireEvent.click(roles);
+    expect(within(section).getByText("Sonnet")).toBeVisible();
+    expect(within(section).getByDisplayValue("m-s")).toBeVisible();
+    expect(
+      screen.getAllByRole("button", { name: "providerForm.fetchModels" }),
+    ).toHaveLength(1);
+  });
+
   it("fetches upstream models, saves selected rows and labels without changing role mappings", async () => {
     vi.mocked(fetchModelsForConfig).mockResolvedValue([
       { id: "model-a", ownedBy: "vendor" },

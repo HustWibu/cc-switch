@@ -190,7 +190,7 @@
       "generateCommand": "生成命令",
       "copyCommand": "复制命令",
       "generatedCommand": "启动命令",
-      "commandHint": "粘贴到终端即可使用所选目录和选项启动。此命令仅可运行一次，再次运行请重新生成。",
+      "commandHint": "粘贴到终端即可使用所选目录和选项启动。优先使用已有启动配置；没有时生成一次性命令。",
       "commandCopied": "命令已复制",
       "generateFailed": "生成命令失败",
       "title": "在哪个目录打开终端？",
@@ -1618,12 +1618,14 @@
   },
   "providerForm": {
     "claudeModelPicker": {
-      "title": "Claude Code /model 模型列表",
-      "help": "获取模型后，勾选要在 Claude Code 中显示的模型。需要 Claude Code 2.1.242 或更高版本；保存并启用此供应商后重启 Claude Code。",
-      "replaceBuiltIn": "替换内置模型列表",
+      "title": "模型",
+      "help": "选择要在 Claude Code /model 菜单中显示的模型。",
+      "replaceBuiltIn": "仅显示选中的模型",
       "empty": "未选择模型，Claude Code 使用默认模型列表。",
       "labelFor": "{{model}} 的显示名称",
-      "remove": "移除 {{model}}"
+      "remove": "移除 {{model}}",
+      "roleDefaults": "角色默认模型与回落",
+      "roleHelp": "设置角色别名和后台任务使用的模型。这些默认值不限制 /model 列表。1M 仅声明上下文支持。"
     },
     "nativeConfig": {
       "title": "配置文件 {{path}}（只显示这一家）",

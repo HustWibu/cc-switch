@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import type { ReactNode } from "react";
 import { Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -30,6 +31,7 @@ export function ClaudeModelPickerField({
   onFetch,
   isFetching,
   baseUrl,
+  children,
 }: {
   value: unknown;
   onChange: (value: ClaudeModelPickerConfig | undefined) => void;
@@ -37,6 +39,7 @@ export function ClaudeModelPickerField({
   onFetch: () => void;
   isFetching: boolean;
   baseUrl: string;
+  children?: ReactNode;
 }) {
   const { t } = useTranslation();
   const config = isPlainObject(value) ? value : {};
@@ -144,6 +147,7 @@ export function ClaudeModelPickerField({
           </div>
         ))
       )}
+      {children}
     </section>
   );
 }

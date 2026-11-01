@@ -405,6 +405,20 @@ fn raise_open_file_limit() {
 fn handle_second_instance(app: &tauri::AppHandle, args: Vec<String>) {
     static SERIAL: std::sync::Mutex<()> = std::sync::Mutex::new(());
     let _serial = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+    if args
+        .iter()
+        .any(|arg| arg == crate::services::launch_profiles::START_PROXY_ARG)
+    {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Some(state) = app.try_state::<AppState>() {
+                if let Err(error) = state.proxy_service.start().await {
+                    log::error!("Cannot start profile routing: {error}");
+                }
+            }
+        });
+        return;
+    }
     log::debug!("Args count: {}", args.len());
     for (i, arg) in args.iter().enumerate() {
         log::debug!("  arg[{i}]: {}", url_for_log(arg));
@@ -1372,6 +1386,11 @@ pub fn run() {
                 // 定下各应用的直连 / 代理模式（处理旧版遗留的接管状态），再把代理模式的
                 // 应用接上。要排在通用配置片段的自动提取之后：它读的是直连的 live。
                 crate::mode::controller::startup(&state).await;
+                if std::env::args().any(|arg| arg == crate::services::launch_profiles::START_PROXY_ARG) {
+                    if let Err(error) = state.proxy_service.start().await {
+                        log::error!("Cannot start profile routing: {error}");
+                    }
+                }
                 // #8268 测试版给 agy 装过包装脚本、改过 shell 启动文件，撤掉带标记的部分。
                 if let Err(e) =
                     crate::services::provider::agy_direct::migrate_legacy_launcher(&state.db)

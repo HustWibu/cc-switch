@@ -190,7 +190,7 @@
       "generateCommand": "コマンドを生成",
       "copyCommand": "コマンドをコピー",
       "generatedCommand": "起動コマンド",
-      "commandHint": "ターミナルに貼り付けると、選択したフォルダーとオプションで起動します。このコマンドは一度だけ使えます。再実行するには再生成してください。",
+      "commandHint": "ターミナルに貼り付けると、選択したフォルダーとオプションで起動します。既存の起動プロファイルを優先し、なければ一度だけ使えるコマンドを生成します。",
       "commandCopied": "コマンドをコピーしました",
       "generateFailed": "コマンドの生成に失敗しました",
       "title": "どのフォルダでターミナルを開きますか？",
@@ -1618,12 +1618,14 @@
   },
   "providerForm": {
     "claudeModelPicker": {
-      "title": "Claude Code /model のモデル一覧",
-      "help": "モデルを取得し、Claude Code に表示するモデルを選択します。Claude Code 2.1.242 以降が必要です。保存してこのプロバイダーを有効にした後、Claude Code を再起動してください。",
-      "replaceBuiltIn": "組み込みのモデル一覧を置き換える",
+      "title": "モデル",
+      "help": "Claude Code の /model メニューに表示するモデルを選択します。",
+      "replaceBuiltIn": "選択したモデルのみ表示",
       "empty": "モデルが未選択です。Claude Code は既定の一覧を使用します。",
       "labelFor": "{{model}} の表示名",
-      "remove": "{{model}} を削除"
+      "remove": "{{model}} を削除",
+      "roleDefaults": "ロールの既定モデルとフォールバック",
+      "roleHelp": "ロールの別名とバックグラウンド処理で使うモデルを設定します。/model の一覧は制限されません。1M はコンテキスト対応の宣言です。"
     },
     "nativeConfig": {
       "title": "設定ファイル {{path}}（このプロバイダーのみ）",

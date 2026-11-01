@@ -190,7 +190,7 @@
       "generateCommand": "Generate command",
       "copyCommand": "Copy command",
       "generatedCommand": "Launch command",
-      "commandHint": "Paste into your terminal to run with the selected folder and options. This command runs once; generate a new one to run again.",
+      "commandHint": "Paste into your terminal to run with the selected folder and options. Uses an existing launch profile when available; otherwise generates a one-use command.",
       "commandCopied": "Command copied",
       "generateFailed": "Failed to generate command",
       "title": "Open a terminal in which folder?",
@@ -1618,12 +1618,14 @@
   },
   "providerForm": {
     "claudeModelPicker": {
-      "title": "Models in Claude Code /model",
-      "help": "Fetch models, then select which ones appear in Claude Code. Requires Claude Code 2.1.242 or later; restart Claude Code after saving and activating this provider.",
-      "replaceBuiltIn": "Replace the built-in model list",
+      "title": "Models",
+      "help": "Choose the models shown in Claude Code’s /model menu.",
+      "replaceBuiltIn": "Show only selected models",
       "empty": "No models selected. Claude Code uses its default model list.",
       "labelFor": "Display name for {{model}}",
-      "remove": "Remove {{model}}"
+      "remove": "Remove {{model}}",
+      "roleDefaults": "Role defaults & fallback",
+      "roleHelp": "Set the models used by role aliases and background tasks. These defaults do not limit your /model list. 1M declares context support."
     },
     "nativeConfig": {
       "title": "Config file {{path}} (this provider only)",

@@ -25,7 +25,7 @@ pub fn delete_launch_profile(state: State<'_, AppState>, id: String) -> Result<(
 }
 
 #[tauri::command]
-pub fn launch_profile_terminal(state: State<'_, AppState>, id: String) -> Result<(), String> {
+pub async fn launch_profile_terminal(state: State<'_, AppState>, id: String) -> Result<(), String> {
     let profile = state
         .db
         .list_launch_profiles()
@@ -34,6 +34,9 @@ pub fn launch_profile_terminal(state: State<'_, AppState>, id: String) -> Result
         .find(|p| p.id == id)
         .ok_or("Unknown launch profile")?;
     launch_profiles::provider(&state.db, &profile).map_err(|e| e.to_string())?;
+    if profile.routing_mode == launch_profiles::RoutingMode::Proxy {
+        state.proxy_service.start().await?;
+    }
     #[cfg(target_os = "macos")]
     {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;

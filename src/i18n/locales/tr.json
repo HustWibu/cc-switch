@@ -188,7 +188,7 @@
       "generateCommand": "Komut oluştur",
       "copyCommand": "Komutu kopyala",
       "generatedCommand": "Başlatma komutu",
-      "commandHint": "Seçilen klasör ve seçeneklerle çalıştırmak için terminale yapıştırın. Komut bir kez çalışır; tekrar çalıştırmak için yeniden oluşturun.",
+      "commandHint": "Seçilen klasör ve seçeneklerle çalıştırmak için terminale yapıştırın. Varsa mevcut başlatma profilini kullanır; yoksa tek kullanımlık bir komut oluşturur.",
       "commandCopied": "Komut kopyalandı",
       "generateFailed": "Komut oluşturulamadı",
       "title": "Terminal hangi klasörde açılsın?",
@@ -1603,12 +1603,14 @@
   },
   "providerForm": {
     "claudeModelPicker": {
-      "title": "Claude Code /model modelleri",
-      "help": "Modelleri alın ve Claude Code içinde görünecek olanları seçin. Claude Code 2.1.242 veya üzeri gerekir. Kaydedip bu sağlayıcıyı etkinleştirdikten sonra Claude Code uygulamasını yeniden başlatın.",
-      "replaceBuiltIn": "Yerleşik model listesini değiştir",
+      "title": "Modeller",
+      "help": "Claude Code /model menüsünde gösterilecek modelleri seçin.",
+      "replaceBuiltIn": "Yalnızca seçili modelleri göster",
       "empty": "Model seçilmedi. Claude Code varsayılan model listesini kullanır.",
       "labelFor": "{{model}} için görünen ad",
-      "remove": "{{model}} modelini kaldır"
+      "remove": "{{model}} modelini kaldır",
+      "roleDefaults": "Rol varsayılanları ve yedek model",
+      "roleHelp": "Rol takma adları ve arka plan görevleri için modelleri ayarlayın. Bu varsayılanlar /model listesini sınırlamaz. 1M, bağlam desteğini belirtir."
     },
     "supplierName": "Sağlayıcı Adı",
     "supplierNameRequired": "Sağlayıcı Adı *",

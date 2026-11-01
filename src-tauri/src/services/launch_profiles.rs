@@ -54,6 +54,75 @@ pub enum RoutingMode {
     Direct,
 }
 
+pub(crate) const START_PROXY_ARG: &str = "--start-profile-proxy";
+
+pub(crate) fn profile_for_provider(
+    db: &Database,
+    runtime: &str,
+    provider_id: &str,
+) -> Result<Option<LaunchProfile>, AppError> {
+    let mut matches: Vec<_> = db
+        .list_launch_profiles()?
+        .into_iter()
+        .filter(|profile| profile.runtime.as_str() == runtime && profile.provider_id == provider_id)
+        .collect();
+    if matches.len() > 1 {
+        if let Some(index) = matches.iter().position(|profile| profile.is_default) {
+            return Ok(Some(matches.swap_remove(index)));
+        }
+        return Err(invalid("Multiple launch profiles use this provider. Select a default in Launch profiles before generating a command."));
+    }
+    Ok(matches.pop())
+}
+
+async fn proxy_is_ready(client: &reqwest::Client, base: &str) -> bool {
+    let Ok(response) = client.get(format!("{base}/health")).send().await else {
+        return false;
+    };
+    if !response.status().is_success() {
+        return false;
+    }
+    response
+        .json::<serde_json::Value>()
+        .await
+        .is_ok_and(|body| body["status"] == "healthy")
+}
+
+async fn ensure_proxy_ready(
+    client: &reqwest::Client,
+    base: &str,
+    start: impl FnOnce() -> Result<(), AppError>,
+    timeout: std::time::Duration,
+) -> Result<(), AppError> {
+    if proxy_is_ready(client, base).await {
+        return Ok(());
+    }
+    start()?;
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        if proxy_is_ready(client, base).await {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(invalid("CC Switch could not start profile routing. Open Launch profiles and choose Start profile routing; check for a port conflict if it still fails."));
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+}
+
+fn request_proxy_start() -> Result<(), AppError> {
+    std::process::Command::new(
+        std::env::current_exe().map_err(|error| AppError::Message(error.to_string()))?,
+    )
+    .arg(START_PROXY_ARG)
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::null())
+    .stderr(std::process::Stdio::null())
+    .spawn()
+    .map_err(|error| AppError::Message(format!("Cannot start CC Switch routing: {error}")))?;
+    Ok(())
+}
+
 fn invalid(message: &str) -> AppError {
     AppError::InvalidInput(message.into())
 }
@@ -288,11 +357,18 @@ pub(crate) async fn command_by_id(
 
 /// Forward model configuration without copying provider credentials into the child.
 /// The profile's explicit startup model takes precedence over the provider default.
-fn apply_claude_model_env(
+fn apply_claude_model_settings(
     command: &mut std::process::Command,
     settings: &serde_json::Value,
     startup_model: Option<&str>,
 ) {
+    if let Some(picker) = settings.get("modelPicker") {
+        // --settings also accepts inline JSON. Only pass the picker here:
+        // profile credentials and routing remain scoped to the child environment.
+        command
+            .arg("--settings")
+            .arg(serde_json::json!({"modelPicker": picker}).to_string());
+    }
     let env = settings.get("env").and_then(serde_json::Value::as_object);
     if let Some(env) = env {
         for key in ["ANTHROPIC_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"] {
@@ -350,7 +426,7 @@ async fn profile_command(
     command
         .env("CLAUDE_CONFIG_DIR", &profile.config_dir)
         .env("CLAUDE_SECURESTORAGE_CONFIG_DIR", &profile.config_dir);
-    apply_claude_model_env(
+    apply_claude_model_settings(
         &mut command,
         &selected.settings_config,
         profile.model.as_deref(),
@@ -374,12 +450,13 @@ async fn profile_command(
             .timeout(std::time::Duration::from_secs(2))
             .build()
             .map_err(|_| invalid("Cannot initialize proxy check"))?;
-        client
-            .get(format!("{base}/health"))
-            .send()
-            .await
-            .and_then(|r| r.error_for_status())
-            .map_err(|_| invalid("CC Switch proxy is unavailable; start local routing first"))?;
+        ensure_proxy_ready(
+            &client,
+            &base,
+            request_proxy_start,
+            std::time::Duration::from_secs(15),
+        )
+        .await?;
         let token = format!(
             "ccsp_{}{}",
             uuid::Uuid::new_v4().simple(),
@@ -487,6 +564,114 @@ pub fn cli(args: Vec<std::ffi::OsString>) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provider_profile_selection_respects_runtime_and_explicit_default() {
+        let db = Database::memory().unwrap();
+        assert!(profile_for_provider(&db, "claude", "mock")
+            .unwrap()
+            .is_none());
+        let mut first = profile("/tmp/profile-selection/first".into());
+        first.id = "first".into();
+        first.launcher = "claude-first".into();
+        db.save_launch_profile(first.clone()).unwrap();
+        let mut native = first.clone();
+        native.id = "native".into();
+        native.launcher = "codex-native".into();
+        native.runtime = LaunchRuntime::Codex;
+        native.config_dir = "/tmp/profile-selection/native".into();
+        db.save_launch_profile(native).unwrap();
+        assert_eq!(
+            profile_for_provider(&db, "claude", "mock")
+                .unwrap()
+                .unwrap()
+                .id,
+            "first"
+        );
+        let mut second = first;
+        second.id = "second".into();
+        second.launcher = "claude-second".into();
+        second.config_dir = "/tmp/profile-selection/second".into();
+        db.save_launch_profile(second).unwrap();
+        assert!(profile_for_provider(&db, "claude", "mock").is_err());
+        db.set_default_launch_profile("second").unwrap();
+        assert_eq!(
+            profile_for_provider(&db, "claude", "mock")
+                .unwrap()
+                .unwrap()
+                .id,
+            "second"
+        );
+    }
+
+    #[tokio::test]
+    async fn proxy_readiness_starts_on_demand_and_reuses_running_service() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+        let ready = Arc::new(AtomicBool::new(false));
+        let response_ready = ready.clone();
+        let app = axum::Router::new().route("/health", axum::routing::get(move || {
+            let ready = response_ready.clone();
+            async move { axum::Json(serde_json::json!({"status": if ready.load(Ordering::SeqCst) {"healthy"} else {"starting"}})) }
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        ensure_proxy_ready(
+            &client,
+            &base,
+            || {
+                ready.store(true, Ordering::SeqCst);
+                Ok(())
+            },
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        ensure_proxy_ready(
+            &client,
+            &base,
+            || panic!("running proxy must not be restarted"),
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        ready.store(false, Ordering::SeqCst);
+        let error = ensure_proxy_ready(
+            &client,
+            &base,
+            || Ok(()),
+            std::time::Duration::from_millis(10),
+        )
+        .await
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("could not start profile routing"));
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn proxy_readiness_reports_start_failure_without_launching_a_client() {
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        let error = ensure_proxy_ready(
+            &client,
+            &base,
+            || Err(invalid("start failed")),
+            std::time::Duration::from_millis(10),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("start failed"));
+    }
     fn profile(path: PathBuf) -> LaunchProfile {
         LaunchProfile {
             id: "test".into(),
@@ -517,7 +702,7 @@ mod tests {
             "ANTHROPIC_BASE_URL": "https://must-not-bypass.invalid"
         }});
         let mut command = std::process::Command::new("claude");
-        apply_claude_model_env(&mut command, &settings, None);
+        apply_claude_model_settings(&mut command, &settings, None);
         let env: std::collections::HashMap<_, _> = command.get_envs().collect();
         for key in [
             "ANTHROPIC_MODEL",
@@ -539,7 +724,7 @@ mod tests {
     #[test]
     fn launcher_startup_override_keeps_the_provider_model_menu() {
         let mut command = std::process::Command::new("claude");
-        apply_claude_model_env(
+        apply_claude_model_settings(
             &mut command,
             &serde_json::json!({"env": {
                 "ANTHROPIC_MODEL": "provider-default",
@@ -557,6 +742,31 @@ mod tests {
             env[std::ffi::OsStr::new("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME")].unwrap(),
             "My Sonnet"
         );
+    }
+
+    #[test]
+    fn launcher_passes_selected_models_as_settings_without_other_provider_fields() {
+        let picker = serde_json::json!({
+            "replaceBuiltInOptions": true,
+            "options": [{"model": "gpt-6-astra", "label": "GPT"}]
+        });
+        let settings = serde_json::json!({
+            "modelPicker": picker,
+            "hooks": {"must-not-copy": true},
+            "env": {"ANTHROPIC_MODEL": "gpt-6-astra", "ANTHROPIC_API_KEY": "must-not-copy"}
+        });
+        let mut command = std::process::Command::new("claude");
+        apply_claude_model_settings(&mut command, &settings, Some("startup-model"));
+        let args: Vec<_> = command.get_args().collect();
+        assert_eq!(args[0], "--settings");
+        let passed: serde_json::Value = serde_json::from_str(args[1].to_str().unwrap()).unwrap();
+        assert_eq!(passed, serde_json::json!({"modelPicker": picker}));
+        let env: std::collections::HashMap<_, _> = command.get_envs().collect();
+        assert_eq!(
+            env[std::ffi::OsStr::new("ANTHROPIC_MODEL")].unwrap(),
+            "startup-model"
+        );
+        assert!(!env.contains_key(std::ffi::OsStr::new("ANTHROPIC_API_KEY")));
     }
 
     #[test]
