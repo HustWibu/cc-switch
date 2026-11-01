@@ -364,7 +364,11 @@ fn apply_claude_model_settings(
 ) {
     let env = settings.get("env").and_then(serde_json::Value::as_object);
     if let Some(env) = env {
-        for key in ["ANTHROPIC_MODEL", "CLAUDE_CODE_SUBAGENT_MODEL"] {
+        for key in [
+            "ANTHROPIC_MODEL",
+            "CLAUDE_CODE_SUBAGENT_MODEL",
+            "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+        ] {
             if let Some(value) = env.get(key).and_then(serde_json::Value::as_str) {
                 command.env(key, value);
             }
@@ -386,6 +390,26 @@ fn apply_claude_model_settings(
     }
     if let Some(model) = startup_model {
         command.env("ANTHROPIC_MODEL", model);
+    }
+    apply_claude_context_window(command, startup_model);
+}
+
+fn apply_claude_context_window(command: &mut std::process::Command, model: Option<&str>) {
+    let mut env: serde_json::Map<String, serde_json::Value> = command
+        .get_envs()
+        .filter_map(|(key, value)| {
+            Some((
+                key.to_str()?.to_string(),
+                serde_json::Value::String(value?.to_str()?.to_string()),
+            ))
+        })
+        .collect();
+    super::claude_model_settings::ensure_context_window(&mut env, model);
+    if let Some(window) = env
+        .get(super::claude_model_settings::CONTEXT_WINDOW)
+        .and_then(serde_json::Value::as_str)
+    {
+        command.env(super::claude_model_settings::CONTEXT_WINDOW, window);
     }
 }
 
@@ -529,6 +553,16 @@ pub fn cli(args: Vec<std::ffi::OsString>) -> i32 {
         } else {
             runtime.block_on(command(&db, alias))?
         };
+        if cmd.get_program() == "claude" {
+            let forwarded: Vec<String> = args[2..]
+                .iter()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect();
+            apply_claude_context_window(
+                &mut cmd,
+                super::claude_model_settings::argument_model(&forwarded),
+            );
+        }
         cmd.args(&args[2..]);
         drop(runtime);
         drop(db);
@@ -681,6 +715,32 @@ mod tests {
             updated_at: 0,
         }
     }
+    #[test]
+    fn launcher_custom_context_respects_startup_and_provider_window() {
+        for (default, startup, window, expected) in [
+            ("gpt-6.1-terra", None, None, Some("200000")),
+            ("sonnet", Some("gpt-6.1-terra"), None, Some("200000")),
+            ("gpt-6.1-terra", Some("sonnet"), None, None),
+            ("gpt-6.1-terra", None, Some("128000"), Some("128000")),
+            ("sonnet", None, None, None),
+        ] {
+            let mut settings = serde_json::json!({"env":{"ANTHROPIC_MODEL":default}});
+            if let Some(window) = window {
+                settings["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"] = window.into();
+            }
+            let mut command = std::process::Command::new("claude");
+            apply_claude_model_settings(&mut command, &settings, startup);
+            let env: std::collections::HashMap<_, _> = command.get_envs().collect();
+            assert_eq!(
+                env.get(std::ffi::OsStr::new("CLAUDE_CODE_MAX_CONTEXT_TOKENS"))
+                    .copied()
+                    .flatten(),
+                expected.map(std::ffi::OsStr::new)
+            );
+            assert!(!env.contains_key(std::ffi::OsStr::new("ANTHROPIC_CUSTOM_MODEL_OPTION")));
+        }
+    }
+
     #[test]
     fn launcher_passes_model_picker_names_without_provider_credentials() {
         let settings = serde_json::json!({"env": {

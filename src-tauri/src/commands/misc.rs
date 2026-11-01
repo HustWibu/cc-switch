@@ -5472,6 +5472,26 @@ impl ProviderLaunch {
         if cfg!(target_os = "windows") && args.iter().any(|arg| arg.contains(['"', '%', '^'])) {
             return Err("附加参数里有 Windows 终端传不过去的字符（\" % ^）".to_string());
         }
+        if self.program == "claude"
+            && self.args.first().is_some_and(|arg| arg == "--settings")
+            && crate::services::claude_model_settings::argument_model(&args).is_some()
+        {
+            let path = Path::new(&self.args[1]);
+            let mut settings: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(path).map_err(|e| e.to_string())?)
+                    .map_err(|e| e.to_string())?;
+            if let Some(env) = settings
+                .get_mut("env")
+                .and_then(serde_json::Value::as_object_mut)
+            {
+                crate::services::claude_model_settings::ensure_context_window(
+                    env,
+                    crate::services::claude_model_settings::argument_model(&args),
+                );
+            }
+            let bytes = serde_json::to_vec_pretty(&settings).map_err(|e| e.to_string())?;
+            crate::config::atomic_write_private(path, &bytes).map_err(|e| e.to_string())?;
+        }
         for (arg, var) in args.into_iter().zip(USER_ARG_BATCH_VARS) {
             // 程序按 Windows 的规则拆命令行：收尾引号前的反斜杠要成对，否则 `C:\work\` 会把
             // 引号当成内容吞掉。
@@ -6107,6 +6127,7 @@ fn write_claude_config(
         env_obj.insert(key.clone(), serde_json::Value::String(value.clone()));
     }
 
+    crate::services::claude_model_settings::ensure_context_window(&mut env_obj, None);
     config_obj.insert("env".to_string(), serde_json::Value::Object(env_obj));
 
     let config_json =
@@ -7849,6 +7870,54 @@ mod tests {
                 r"C:\Users\张三\.cc-switch\agy\relay".to_string()
             )]
         );
+    }
+
+    #[test]
+    fn claude_terminal_custom_context_covers_default_and_argument() {
+        for default in ["gpt-6.1-terra", "sonnet"] {
+            let mut launch = claude_terminal_launch(
+                &[("ANTHROPIC_MODEL".into(), default.into())],
+                "context-test",
+            )
+            .unwrap();
+            launch
+                .append_user_args(vec!["--model=gpt-6.1-terra".into()])
+                .unwrap();
+            let settings: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&launch.cleanup[0]).unwrap()).unwrap();
+            assert_eq!(settings["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "200000");
+            assert_eq!(settings["env"]["ANTHROPIC_MODEL"], default);
+            assert!(settings.get("modelPicker").is_none());
+            assert!(settings["env"]
+                .get("ANTHROPIC_CUSTOM_MODEL_OPTION")
+                .is_none());
+            std::fs::remove_file(&launch.cleanup[0]).unwrap();
+        }
+    }
+
+    #[test]
+    fn claude_terminal_custom_context_preserves_provider_limit_and_official_login() {
+        let mut launch = claude_terminal_launch(
+            &[
+                ("ANTHROPIC_MODEL".into(), "gpt-6.1-terra".into()),
+                ("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), "128000".into()),
+            ],
+            "context-explicit-test",
+        )
+        .unwrap();
+        launch
+            .append_user_args(vec!["--model".into(), "other-custom".into()])
+            .unwrap();
+        let settings: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&launch.cleanup[0]).unwrap()).unwrap();
+        assert_eq!(settings["env"]["CLAUDE_CODE_MAX_CONTEXT_TOKENS"], "128000");
+        std::fs::remove_file(&launch.cleanup[0]).unwrap();
+        let official = claude_account_terminal_launch(None);
+        assert!(!official.args.iter().any(|arg| arg == "--settings"));
+        assert!(!official
+            .env
+            .iter()
+            .any(|(key, value)| *key == "CLAUDE_CODE_MAX_CONTEXT_TOKENS" && value.is_some()));
     }
 
     #[cfg(unix)]
